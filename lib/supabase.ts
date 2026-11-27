@@ -29,3 +29,26 @@ export async function createClient() {
     }
   );
 }
+
+export async function requireUser() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  const bannedUntil = (
+    user as unknown as { banned_until?: string | null }
+  ).banned_until;
+
+  if (bannedUntil && new Date(bannedUntil).getTime() > Date.now()) {
+    throw new Error("ACCOUNT_BANNED");
+  }
+
+  return user;
+}
