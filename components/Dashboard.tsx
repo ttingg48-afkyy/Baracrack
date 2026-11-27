@@ -31,44 +31,47 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  // Authentication
+  // AUTH
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
 
-  // Dashboard
+  // DASHBOARD
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<
     "terminal" | "files" | "editor" | "admin"
   >("terminal");
 
-  // Terminal
+  // TERMINAL
   const [command, setCommand] = useState("pwd");
   const [output, setOutput] = useState(
     "BARA TERMINAL v4.0\nLIVE CONSOLE READY\n"
   );
 
-  // Files
+  // FILES
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
   const [preview, setPreview] = useState("");
 
-  // Admin
+  // ADMIN
   const [users, setUsers] = useState<AdminUser[]>([]);
 
   const isAdmin =
-    user?.email?.toLowerCase() ===
-    process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
+    !!user?.email &&
+    user.email.toLowerCase() ===
+      process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
 
+  // API HELPER
   const api = useCallback(
     async (url: string, options?: RequestInit) => {
       const response = await fetch(url, {
         ...options,
         credentials: "same-origin",
+        cache: "no-store",
       });
 
       const raw = await response.text();
@@ -81,7 +84,7 @@ export default function Dashboard() {
       }
 
       if (!response.ok) {
-        throw new Error(data.error || "Request gagal.");
+        throw new Error(data.error || `Request gagal (${response.status}).`);
       }
 
       return data;
@@ -89,7 +92,7 @@ export default function Dashboard() {
     []
   );
 
-  // Check session
+  // SESSION
   useEffect(() => {
     let active = true;
 
@@ -98,6 +101,7 @@ export default function Dashboard() {
         const { data, error } = await supabase.auth.getUser();
 
         if (error) throw error;
+
         if (active) setUser(data.user);
       } catch {
         if (active) setUser(null);
@@ -111,7 +115,7 @@ export default function Dashboard() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
+      if (active) setUser(session?.user || null);
     });
 
     return () => {
@@ -120,7 +124,7 @@ export default function Dashboard() {
     };
   }, [supabase]);
 
-  // Authentication helpers
+  // AUTH HELPERS
   function switchMode(next: "login" | "signup") {
     setMode(next);
     setCodeSent(false);
@@ -254,10 +258,16 @@ export default function Dashboard() {
   }
 
   async function logout() {
+    if (busy) return;
+
     setBusy(true);
 
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+
+      if (error) throw error;
+    } catch (error: any) {
+      setMessage(error.message || "Logout gagal.");
     } finally {
       setUser(null);
       setTab("terminal");
@@ -268,14 +278,14 @@ export default function Dashboard() {
     }
   }
 
-  // Terminal
+  // TERMINAL
   async function run(cmd = command) {
     const selected = cmd.trim();
 
     if (!selected || busy) return;
 
     setBusy(true);
-    setOutput("$ " + selected + "\nMenjalankan...\n");
+    setOutput(`$ ${selected}\nMenjalankan...\n`);
 
     try {
       const data = await api("/api/terminal", {
@@ -285,19 +295,13 @@ export default function Dashboard() {
       });
 
       setOutput(
-        "$ " +
-          selected +
-          "\n" +
+        `$ ${selected}\n` +
           (data.stdout || "") +
           (data.stderr || "") +
-          "\n[exit " +
-          data.exitCode +
-          "]\n"
+          `\n[exit ${data.exitCode ?? "unknown"}]\n`
       );
     } catch (error: any) {
-      setOutput(
-        "$ " + selected + "\nERROR: " + error.message + "\n"
-      );
+      setOutput(`$ ${selected}\nERROR: ${error.message}\n`);
     } finally {
       setBusy(false);
     }
@@ -307,11 +311,13 @@ export default function Dashboard() {
     setOutput("");
   }
 
-  function copyOutput() {
-    navigator.clipboard
-      .writeText(output)
-      .then(() => setMessage("Log berhasil disalin."))
-      .catch(() => setMessage("Gagal menyalin log."));
+  async function copyOutput() {
+    try {
+      await navigator.clipboard.writeText(output);
+      setMessage("Log berhasil disalin.");
+    } catch {
+      setMessage("Gagal menyalin log.");
+    }
   }
 
   function exportOutput() {
@@ -340,32 +346,40 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   }
 
-  // File manager
+  // FILE MANAGER
+  // Helper ini tidak memeriksa busy agar bisa dipakai
+  // setelah operasi create/delete selesai.
+  async function fetchFolder(folder: string) {
+    const data = await api(
+      "/api/files?path=" + encodeURIComponent(folder)
+    );
+
+    setEntries(data.entries || []);
+    setPath(folder);
+  }
+
   async function refresh(folder = path) {
     if (busy) return;
 
     setBusy(true);
 
     try {
-      const data = await api(
-        "/api/files?path=" + encodeURIComponent(folder)
-      );
-
-      setEntries(data.entries || []);
-      setPath(folder);
+      await fetchFolder(folder);
       setMessage("Folder berhasil diperbarui.");
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal membuka folder.");
     } finally {
       setBusy(false);
     }
   }
 
   function fullPath(name: string) {
-    return path === "." ? name : path + "/" + name;
+    return path === "." ? name : `${path}/${name}`;
   }
 
   async function openFile(name: string) {
+    if (busy) return;
+
     const target = fullPath(name);
 
     setBusy(true);
@@ -389,7 +403,7 @@ export default function Dashboard() {
       setPreview("");
       setTab("editor");
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal membuka file.");
     } finally {
       setBusy(false);
     }
@@ -413,14 +427,16 @@ export default function Dashboard() {
 
       setMessage("File berhasil disimpan.");
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal menyimpan file.");
     } finally {
       setBusy(false);
     }
   }
 
   async function createItem(type: "file" | "folder") {
-    const name = window.prompt("Nama " + type + ":");
+    if (busy) return;
+
+    const name = window.prompt(`Nama ${type}:`);
 
     if (!name?.trim()) return;
 
@@ -439,17 +455,20 @@ export default function Dashboard() {
         ),
       });
 
+      await fetchFolder(path);
+
       setMessage(type === "folder" ? "Folder dibuat." : "File dibuat.");
-      await refresh(path);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal membuat item.");
     } finally {
       setBusy(false);
     }
   }
 
   async function deleteFile(name: string) {
-    if (!window.confirm("Hapus " + name + "?")) return;
+    if (busy) return;
+
+    if (!window.confirm(`Hapus ${name}?`)) return;
 
     const target = fullPath(name);
 
@@ -465,10 +484,11 @@ export default function Dashboard() {
         }),
       });
 
+      await fetchFolder(path);
+
       setMessage("Item berhasil dihapus.");
-      await refresh(path);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal menghapus item.");
     } finally {
       setBusy(false);
     }
@@ -478,12 +498,24 @@ export default function Dashboard() {
     try {
       const response = await fetch(
         "/api/files?action=download&path=" +
-          encodeURIComponent(fullPath(name))
+          encodeURIComponent(fullPath(name)),
+        {
+          credentials: "same-origin",
+          cache: "no-store",
+        }
       );
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Download gagal.");
+        let errorMessage = "Download gagal.";
+
+        try {
+          const data = await response.json();
+          errorMessage = data.error || errorMessage;
+        } catch {
+          // Gunakan pesan default.
+        }
+
+        throw new Error(errorMessage);
       }
 
       const blob = await response.blob();
@@ -492,15 +524,21 @@ export default function Dashboard() {
 
       a.href = url;
       a.download = name;
+      document.body.appendChild(a);
       a.click();
+      a.remove();
 
       URL.revokeObjectURL(url);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Download gagal.");
     }
   }
 
   async function previewFile(name: string) {
+    if (busy) return;
+
+    setBusy(true);
+
     try {
       const data = await api(
         "/api/files?action=preview&path=" +
@@ -510,11 +548,13 @@ export default function Dashboard() {
       setPreview(data.content || "");
       setMessage("Preview: " + name);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Preview gagal.");
+    } finally {
+      setBusy(false);
     }
   }
 
-  // Admin
+  // ADMIN
   async function loadUsers() {
     if (busy) return;
 
@@ -524,13 +564,15 @@ export default function Dashboard() {
       const data = await api("/api/admin/users");
       setUsers(data.users || []);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Gagal mengambil daftar user.");
     } finally {
       setBusy(false);
     }
   }
 
   async function moderate(id: string, action: string) {
+    if (busy) return;
+
     const reason = window.prompt("Alasan tindakan admin:");
 
     if (reason === null) return;
@@ -548,18 +590,18 @@ export default function Dashboard() {
         }),
       });
 
-      setMessage("Aksi " + action + " berhasil.");
-
       const data = await api("/api/admin/users");
       setUsers(data.users || []);
+
+      setMessage(`Aksi ${action} berhasil.`);
     } catch (error: any) {
-      setMessage(error.message);
+      setMessage(error.message || "Moderasi gagal.");
     } finally {
       setBusy(false);
     }
   }
 
-  // Loading
+  // LOADING
   if (loading) {
     return (
       <main className="auth">
@@ -572,7 +614,7 @@ export default function Dashboard() {
     );
   }
 
-  // Login / Register screen
+  // LOGIN / REGISTER
   if (!user) {
     return (
       <main className="auth">
@@ -636,7 +678,7 @@ export default function Dashboard() {
           {mode === "login" && (
             <button
               className="lime"
-              block
+              style={{ display: "block", width: "100%" }}
               disabled={busy}
               onClick={login}
             >
@@ -647,7 +689,7 @@ export default function Dashboard() {
           {mode === "signup" && !codeSent && (
             <button
               className="lime"
-              block
+              style={{ display: "block", width: "100%" }}
               disabled={busy}
               onClick={sendCode}
             >
@@ -684,7 +726,7 @@ export default function Dashboard() {
 
               <button
                 className="lime"
-                block
+                style={{ display: "block", width: "100%" }}
                 disabled={busy || code.length !== 6}
                 onClick={verifyCode}
               >
@@ -719,7 +761,7 @@ export default function Dashboard() {
     );
   }
 
-  // Main dashboard
+  // MAIN DASHBOARD
   return (
     <main className="shell">
       <header>
@@ -927,6 +969,7 @@ export default function Dashboard() {
 
                       <button
                         title="Download"
+                        disabled={busy}
                         onClick={() => downloadFile(entry.name)}
                       >
                         DOWNLOAD
