@@ -18,7 +18,7 @@ export async function POST(req: Request) {
 
     if (!validGmail(email)) {
       return NextResponse.json(
-        { error: "Pendaftaran dan login hanya menerima alamat @gmail.com." },
+        { error: "Gunakan alamat Gmail (@gmail.com)." },
         { status: 400 }
       );
     }
@@ -36,7 +36,6 @@ export async function POST(req: Request) {
         options: {
           shouldCreateUser: true,
           data: {
-            email,
             registration_source: "bara-terminal"
           }
         }
@@ -46,7 +45,7 @@ export async function POST(req: Request) {
 
       return NextResponse.json({
         ok: true,
-        message: "Kode verifikasi sudah dikirim. Periksa Gmail lu."
+        message: "Kode OTP sudah dikirim ke Gmail."
       });
     }
 
@@ -55,7 +54,14 @@ export async function POST(req: Request) {
 
       if (!/^\d{6}$/.test(token)) {
         return NextResponse.json(
-          { error: "Kode harus terdiri dari 6 angka." },
+          { error: "Masukkan kode OTP 6 angka." },
+          { status: 400 }
+        );
+      }
+
+      if (password.length < 8) {
+        return NextResponse.json(
+          { error: "Password minimal 8 karakter." },
           { status: 400 }
         );
       }
@@ -67,17 +73,16 @@ export async function POST(req: Request) {
       });
 
       if (error) throw error;
+      if (!data.user) throw new Error("Verifikasi gagal.");
 
-      if (!data.user) {
-        throw new Error("Verifikasi gagal.");
-      }
+      const { error: passwordError } =
+        await supabase.auth.updateUser({ password });
+
+      if (passwordError) throw passwordError;
 
       return NextResponse.json({
         ok: true,
-        user: {
-          id: data.user.id,
-          email: data.user.email
-        }
+        message: "Email terverifikasi dan password berhasil disimpan."
       });
     }
 
@@ -89,10 +94,11 @@ export async function POST(req: Request) {
         );
       }
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
+      const { data, error } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
 
       if (error) throw error;
 
@@ -109,10 +115,10 @@ export async function POST(req: Request) {
       { error: "Action tidak dikenal." },
       { status: 400 }
     );
-  } catch (e: any) {
+  } catch (error: any) {
     return NextResponse.json(
-      { error: e.message || "Authentication error." },
+      { error: error.message || "Authentication error." },
       { status: 400 }
     );
   }
-  }
+}
