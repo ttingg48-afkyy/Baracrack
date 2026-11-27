@@ -31,33 +31,28 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  // AUTH
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
 
-  // DASHBOARD
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<
     "terminal" | "files" | "editor" | "admin"
   >("terminal");
 
-  // TERMINAL
-  const [command, setCommand] = useState("pwd");
+  const [command, setCommand] = useState("");
   const [output, setOutput] = useState(
-    "BARA TERMINAL v4.0\nLIVE CONSOLE READY\n"
+    "BARA TERMINAL V4.0\nLIVE CONSOLE READY\n"
   );
 
-  // FILES
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
   const [preview, setPreview] = useState("");
 
-  // ADMIN
   const [users, setUsers] = useState<AdminUser[]>([]);
 
   const isAdmin =
@@ -84,7 +79,9 @@ export default function Dashboard() {
       }
 
       if (!response.ok) {
-        throw new Error(data.error || `Request gagal (${response.status}).`);
+        throw new Error(
+          data.error || `Request gagal (${response.status}).`
+        );
       }
 
       return data;
@@ -124,7 +121,7 @@ export default function Dashboard() {
     };
   }, [supabase]);
 
-  // AUTH HELPERS
+  // AUTH
   function switchMode(next: "login" | "signup") {
     setMode(next);
     setCodeSent(false);
@@ -191,15 +188,17 @@ export default function Dashboard() {
         }),
       });
 
-      const { data: sessionData, error } =
-        await supabase.auth.getSession();
+      const {
+        data: sessionData,
+        error,
+      } = await supabase.auth.getSession();
 
       if (error) throw error;
 
       if (!sessionData.session) {
         throw new Error(
           data.message ||
-            "OTP diterima, tetapi session belum terbentuk. Coba login."
+            "Session belum terbentuk. Silakan login."
         );
       }
 
@@ -245,7 +244,7 @@ export default function Dashboard() {
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error("Session login belum terbentuk. Coba lagi.");
+        throw new Error("Session belum terbentuk. Coba lagi.");
       }
 
       setUser(data.user);
@@ -266,14 +265,15 @@ export default function Dashboard() {
       const { error } = await supabase.auth.signOut();
 
       if (error) throw error;
-    } catch (error: any) {
-      setMessage(error.message || "Logout gagal.");
-    } finally {
+
       setUser(null);
       setTab("terminal");
       setOutput("BARA TERMINAL\nSession ended.\n");
       setFile("");
       setContent("");
+    } catch (error: any) {
+      setMessage(error.message || "Logout gagal.");
+    } finally {
       setBusy(false);
     }
   }
@@ -284,8 +284,18 @@ export default function Dashboard() {
 
     if (!selected || busy) return;
 
+    // Kosongkan INPUT setelah perintah dikirim.
+    // Log tidak dihapus.
+    setCommand("");
     setBusy(true);
-    setOutput(`$ ${selected}\nMenjalankan...\n`);
+
+    // Tambahkan perintah ke log sebelumnya.
+    setOutput((previous) => {
+      const separator =
+        previous && !previous.endsWith("\n") ? "\n" : "";
+
+      return previous + separator + `$ ${selected}\n`;
+    });
 
     try {
       const data = await api("/api/terminal", {
@@ -294,14 +304,17 @@ export default function Dashboard() {
         body: JSON.stringify({ command: selected }),
       });
 
-      setOutput(
-        `$ ${selected}\n` +
-          (data.stdout || "") +
-          (data.stderr || "") +
-          `\n[exit ${data.exitCode ?? "unknown"}]\n`
-      );
+      const result =
+        (data.stdout || "") +
+        (data.stderr || "") +
+        `\n[exit ${data.exitCode ?? "unknown"}]\n`;
+
+      setOutput((previous) => previous + result);
     } catch (error: any) {
-      setOutput(`$ ${selected}\nERROR: ${error.message}\n`);
+      setOutput(
+        (previous) =>
+          previous + `ERROR: ${error.message || "Command gagal."}\n`
+      );
     } finally {
       setBusy(false);
     }
@@ -342,13 +355,10 @@ export default function Dashboard() {
     a.href = url;
     a.download = "bara-terminal-log.json";
     a.click();
-
     URL.revokeObjectURL(url);
   }
 
   // FILE MANAGER
-  // Helper ini tidak memeriksa busy agar bisa dipakai
-  // setelah operasi create/delete selesai.
   async function fetchFolder(folder: string) {
     const data = await api(
       "/api/files?path=" + encodeURIComponent(folder)
@@ -381,7 +391,6 @@ export default function Dashboard() {
     if (busy) return;
 
     const target = fullPath(name);
-
     setBusy(true);
 
     try {
@@ -441,7 +450,6 @@ export default function Dashboard() {
     if (!name?.trim()) return;
 
     const target = fullPath(name.trim());
-
     setBusy(true);
 
     try {
@@ -457,7 +465,9 @@ export default function Dashboard() {
 
       await fetchFolder(path);
 
-      setMessage(type === "folder" ? "Folder dibuat." : "File dibuat.");
+      setMessage(
+        type === "folder" ? "Folder berhasil dibuat." : "File berhasil dibuat."
+      );
     } catch (error: any) {
       setMessage(error.message || "Gagal membuat item.");
     } finally {
@@ -467,11 +477,9 @@ export default function Dashboard() {
 
   async function deleteFile(name: string) {
     if (busy) return;
-
     if (!window.confirm(`Hapus ${name}?`)) return;
 
     const target = fullPath(name);
-
     setBusy(true);
 
     try {
@@ -485,7 +493,6 @@ export default function Dashboard() {
       });
 
       await fetchFolder(path);
-
       setMessage("Item berhasil dihapus.");
     } catch (error: any) {
       setMessage(error.message || "Gagal menghapus item.");
@@ -512,7 +519,7 @@ export default function Dashboard() {
           const data = await response.json();
           errorMessage = data.error || errorMessage;
         } catch {
-          // Gunakan pesan default.
+          // Respons bukan JSON.
         }
 
         throw new Error(errorMessage);
@@ -583,11 +590,7 @@ export default function Dashboard() {
       await api("/api/admin/users", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id,
-          action,
-          reason,
-        }),
+        body: JSON.stringify({ id, action, reason }),
       });
 
       const data = await api("/api/admin/users");
@@ -614,13 +617,12 @@ export default function Dashboard() {
     );
   }
 
-  // LOGIN / REGISTER
+  // AUTH SCREEN
   if (!user) {
     return (
       <main className="auth">
         <section className="authCard">
           <small>BARA ACCOUNT SYSTEM / V4.0</small>
-
           <span className="pill">SECURE ACCESS</span>
 
           <h1>BARA TERMINAL</h1>
@@ -650,7 +652,6 @@ export default function Dashboard() {
           {!codeSent && (
             <>
               <label>EMAIL ADDRESS</label>
-
               <input
                 type="email"
                 placeholder="nama@gmail.com"
@@ -661,7 +662,6 @@ export default function Dashboard() {
               />
 
               <label>PASSWORD</label>
-
               <input
                 type="password"
                 placeholder="Minimal 8 karakter"
@@ -850,7 +850,7 @@ export default function Dashboard() {
 
             <button
               className="amber"
-              disabled={busy}
+              disabled={busy || !command.trim()}
               onClick={() => run()}
             >
               {busy ? "RUNNING..." : "RUN"}
@@ -867,7 +867,6 @@ export default function Dashboard() {
             </button>
 
             <button onClick={copyOutput}>COPY LOG</button>
-
             <button onClick={exportOutput}>EXPORT JSON</button>
 
             <button className="red" onClick={clearTerminal}>
@@ -952,7 +951,6 @@ export default function Dashboard() {
                   {entry.type === "file" && (
                     <div className="actions">
                       <button
-                        title="Edit"
                         disabled={busy}
                         onClick={() => openFile(entry.name)}
                       >
@@ -960,7 +958,6 @@ export default function Dashboard() {
                       </button>
 
                       <button
-                        title="Preview"
                         disabled={busy}
                         onClick={() => previewFile(entry.name)}
                       >
@@ -968,7 +965,6 @@ export default function Dashboard() {
                       </button>
 
                       <button
-                        title="Download"
                         disabled={busy}
                         onClick={() => downloadFile(entry.name)}
                       >
@@ -1005,7 +1001,6 @@ export default function Dashboard() {
       {tab === "editor" && (
         <section className="panel">
           <small>CODE EDITOR / SAVE ENABLED</small>
-
           <h2>{file || "SELECT A FILE"}</h2>
 
           {!file && (
