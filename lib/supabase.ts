@@ -23,7 +23,6 @@ export async function createClient() {
       getAll() {
         return cookieStore.getAll();
       },
-
       setAll(
         items: {
           name: string;
@@ -32,11 +31,11 @@ export async function createClient() {
         }[]
       ) {
         try {
-          for (const { name, value, options } of items) {
+          items.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
-          }
+          });
         } catch {
-          // Cookie tidak dapat ditulis dari Server Component.
+          // Server Component tidak bisa menulis cookie.
         }
       },
     },
@@ -45,18 +44,28 @@ export async function createClient() {
 
 export function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !serviceRoleKey) {
+  if (!url || !key) {
     throw new Error("SUPABASE_SERVICE_ROLE_CONFIG_MISSING");
   }
 
-  return createAdminClient(url, serviceRoleKey, {
+  return createAdminClient(url, key, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
+}
+
+export function isAdminEmail(email?: string | null) {
+  const configured = process.env.BARA_ADMIN_EMAIL;
+
+  return Boolean(
+    email &&
+      configured &&
+      email.trim().toLowerCase() === configured.trim().toLowerCase()
+  );
 }
 
 export async function requireUser() {
@@ -75,6 +84,13 @@ export async function requireUser() {
     throw new Error("GMAIL_REQUIRED");
   }
 
+  // ADMIN BYPASS:
+  // Admin tidak perlu membaca tabel account_moderation.
+  // Jadi error tabel moderasi tidak akan memblokir terminal admin.
+  if (isAdminEmail(user.email)) {
+    return user;
+  }
+
   let admin;
 
   try {
@@ -84,10 +100,7 @@ export async function requireUser() {
     throw new Error("SUPABASE_SERVICE_ROLE_CONFIG_MISSING");
   }
 
-  const {
-    data: moderation,
-    error: moderationError,
-  } = await admin
+  const { data: moderation, error: moderationError } = await admin
     .from("account_moderation")
     .select("status, reason, expires_at")
     .eq("user_id", user.id)
@@ -112,12 +125,12 @@ export async function requireUser() {
       ? new Date(moderation.expires_at).getTime()
       : null;
 
-    const isActive =
+    const active =
       expiresAt === null ||
       !Number.isFinite(expiresAt) ||
       expiresAt > Date.now();
 
-    if (isActive) {
+    if (active) {
       throw new Error(
         moderation.status === "banned"
           ? "ACCOUNT_BANNED"
@@ -125,8 +138,7 @@ export async function requireUser() {
       );
     }
 
-    // Status sudah kedaluwarsa, otomatis dianggap aktif.
-    await admin
+    const { error: updateError } = await admin
       .from("account_moderation")
       .update({
         status: "active",
@@ -135,17 +147,11 @@ export async function requireUser() {
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", user.id);
+
+    if (updateError) {
+      console.error("[BARA MODERATION RESET ERROR]", updateError);
+    }
   }
 
   return user;
-}
-
-export function isAdminEmail(email?: string | null) {
-  const adminEmail = process.env.BARA_ADMIN_EMAIL;
-
-  return Boolean(
-    email &&
-    adminEmail &&
-    email.trim().toLowerCase() === adminEmail.trim().toLowerCase()
-  );
 }
