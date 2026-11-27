@@ -4,15 +4,22 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 export async function createClient() {
-  const jar = await cookies();
+  const cookieStore = await cookies();
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Supabase URL atau Anon Key belum diatur.");
+  }
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         getAll() {
-          return jar.getAll();
+          return cookieStore.getAll();
         },
 
         setAll(
@@ -24,31 +31,38 @@ export async function createClient() {
         ) {
           try {
             items.forEach(({ name, value, options }) => {
-              jar.set(name, value, options);
+              cookieStore.set(name, value, options);
             });
           } catch {
-            // Cookie writes may fail in Server Components.
+            // Cookie tidak bisa ditulis dari Server Component.
+            // Middleware dapat menangani refresh session.
           }
-        }
-      }
+        },
+      },
     }
   );
 }
 
 export function adminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !key) {
-    throw new Error("Supabase admin environment belum lengkap.");
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error(
+      "Supabase Service Role Key belum diatur."
+    );
   }
 
-  return createAdminClient(url, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
+  return createAdminClient(
+    supabaseUrl,
+    serviceRoleKey,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
     }
-  });
+  );
 }
 
 export async function requireUser() {
@@ -56,7 +70,7 @@ export async function requireUser() {
 
   const {
     data: { user },
-    error
+    error,
   } = await supabase.auth.getUser();
 
   if (error || !user) {
@@ -69,33 +83,31 @@ export async function requireUser() {
 
   const admin = adminClient();
 
-  const { data: moderation, error: moderationError } = await admin
-    .from("account_moderation")
-    .select("status,reason,expires_at")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const { data: moderation, error: moderationError } =
+    await admin
+      .from("account_moderation")
+      .select("status, reason, expires_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
   if (moderationError) {
     throw new Error("MODERATION_CHECK_FAILED");
   }
 
-  if (moderation?.status === "banned") {
+  if (
+    moderation?.status === "banned" ||
+    moderation?.status === "jailed"
+  ) {
     const expires = moderation.expires_at
       ? new Date(moderation.expires_at).getTime()
       : null;
 
     if (!expires || expires > Date.now()) {
-      throw new Error("ACCOUNT_BANNED");
-    }
-  }
-
-  if (moderation?.status === "jailed") {
-    const expires = moderation.expires_at
-      ? new Date(moderation.expires_at).getTime()
-      : null;
-
-    if (!expires || expires > Date.now()) {
-      throw new Error("ACCOUNT_JAILED");
+      throw new Error(
+        moderation.status === "banned"
+          ? "ACCOUNT_BANNED"
+          : "ACCOUNT_JAILED"
+      );
     }
   }
 
@@ -103,10 +115,11 @@ export async function requireUser() {
 }
 
 export function isAdminEmail(email?: string | null) {
+  const adminEmail = process.env.BARA_ADMIN_EMAIL;
+
   return Boolean(
     email &&
-    process.env.BARA_ADMIN_EMAIL &&
-    email.toLowerCase() ===
-      process.env.BARA_ADMIN_EMAIL.toLowerCase()
+    adminEmail &&
+    email.toLowerCase() === adminEmail.toLowerCase()
   );
 }
