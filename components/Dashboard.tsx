@@ -19,6 +19,8 @@ type AdminUser = {
   };
 };
 
+type Tab = "terminal" | "files" | "editor" | "admin";
+
 export default function Dashboard() {
   const [supabase] = useState(() =>
     createBrowserClient(
@@ -38,9 +40,7 @@ export default function Dashboard() {
   const [codeSent, setCodeSent] = useState(false);
 
   const [message, setMessage] = useState("");
-  const [tab, setTab] = useState<
-    "terminal" | "files" | "editor" | "admin"
-  >("terminal");
+  const [tab, setTab] = useState<Tab>("terminal");
 
   const [command, setCommand] = useState("");
   const [output, setOutput] = useState(
@@ -58,7 +58,7 @@ export default function Dashboard() {
   const isAdmin =
     !!user?.email &&
     user.email.toLowerCase() ===
-      process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
+      (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").toLowerCase();
 
   // API HELPER
   const api = useCallback(
@@ -107,7 +107,7 @@ export default function Dashboard() {
       }
     }
 
-    init();
+    void init();
 
     const {
       data: { subscription },
@@ -121,7 +121,7 @@ export default function Dashboard() {
     };
   }, [supabase]);
 
-  // AUTH
+  // SWITCH AUTH MODE
   function switchMode(next: "login" | "signup") {
     setMode(next);
     setCodeSent(false);
@@ -129,6 +129,7 @@ export default function Dashboard() {
     setMessage("");
   }
 
+  // SEND GMAIL OTP THROUGH BARA API
   async function sendCode() {
     if (busy) return;
 
@@ -138,8 +139,8 @@ export default function Dashboard() {
     try {
       const normalizedEmail = email.trim().toLowerCase();
 
-      if (!normalizedEmail.endsWith("@gmail.com")) {
-        throw new Error("Registrasi hanya menerima Gmail.");
+      if (!/^[a-z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail)) {
+        throw new Error("Registrasi hanya menerima alamat Gmail.");
       }
 
       if (password.length < 8) {
@@ -158,7 +159,9 @@ export default function Dashboard() {
 
       setEmail(normalizedEmail);
       setCodeSent(true);
-      setMessage(data.message || "Kode OTP berhasil dikirim.");
+      setMessage(
+        data.message || "Kode OTP berhasil dikirim melalui Gmail."
+      );
     } catch (error: any) {
       setMessage(error.message || "Gagal mengirim OTP.");
     } finally {
@@ -166,6 +169,7 @@ export default function Dashboard() {
     }
   }
 
+  // VERIFY BARA OTP THEN LOGIN
   async function verifyCode() {
     if (busy) return;
 
@@ -174,37 +178,38 @@ export default function Dashboard() {
 
     try {
       if (!/^\d{6}$/.test(code)) {
-        throw new Error("Masukkan kode OTP 6 angka.");
+        throw new Error("Masukkan kode OTP enam angka.");
       }
 
-      const data = await api("/api/auth", {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      await api("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "verify-code",
-          email: email.trim().toLowerCase(),
+          email: normalizedEmail,
           code,
-          password,
         }),
       });
 
-      const {
-        data: sessionData,
-        error,
-      } = await supabase.auth.getSession();
+      // Supabase email has now been confirmed by BARA API.
+      // Create the user's normal password session.
+      const { data, error } =
+        await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
 
       if (error) throw error;
 
-      if (!sessionData.session) {
-        throw new Error(
-          data.message ||
-            "Session belum terbentuk. Silakan login."
-        );
+      if (!data.user) {
+        throw new Error("Verifikasi berhasil, tetapi login gagal.");
       }
 
-      setUser(sessionData.session.user);
-      setMessage("Email berhasil diverifikasi.");
+      setUser(data.user);
       setCode("");
+      setMessage("Email terverifikasi. Selamat datang!");
     } catch (error: any) {
       setMessage(error.message || "Verifikasi gagal.");
     } finally {
@@ -212,6 +217,7 @@ export default function Dashboard() {
     }
   }
 
+  // NORMAL LOGIN: NO OTP
   async function login() {
     if (busy) return;
 
@@ -221,7 +227,7 @@ export default function Dashboard() {
     try {
       const normalizedEmail = email.trim().toLowerCase();
 
-      if (!normalizedEmail.endsWith("@gmail.com")) {
+      if (!/^[a-z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail)) {
         throw new Error("Gunakan alamat Gmail.");
       }
 
@@ -244,7 +250,7 @@ export default function Dashboard() {
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error("Session belum terbentuk. Coba lagi.");
+        throw new Error("Session belum terbentuk. Coba login lagi.");
       }
 
       setUser(data.user);
@@ -256,6 +262,7 @@ export default function Dashboard() {
     }
   }
 
+  // LOGOUT
   async function logout() {
     if (busy) return;
 
@@ -268,9 +275,12 @@ export default function Dashboard() {
 
       setUser(null);
       setTab("terminal");
-      setOutput("BARA TERMINAL\nSession ended.\n");
+      setCommand("");
+      setOutput("BARA TERMINAL V4.0\nSession ended.\n");
       setFile("");
       setContent("");
+      setPreview("");
+      setMessage("");
     } catch (error: any) {
       setMessage(error.message || "Logout gagal.");
     } finally {
@@ -284,12 +294,10 @@ export default function Dashboard() {
 
     if (!selected || busy) return;
 
-    // Kosongkan INPUT setelah perintah dikirim.
-    // Log tidak dihapus.
+    // Clear only the input, never the existing log.
     setCommand("");
     setBusy(true);
 
-    // Tambahkan perintah ke log sebelumnya.
     setOutput((previous) => {
       const separator =
         previous && !previous.endsWith("\n") ? "\n" : "";
@@ -355,6 +363,7 @@ export default function Dashboard() {
     a.href = url;
     a.download = "bara-terminal-log.json";
     a.click();
+
     URL.revokeObjectURL(url);
   }
 
@@ -466,7 +475,9 @@ export default function Dashboard() {
       await fetchFolder(path);
 
       setMessage(
-        type === "folder" ? "Folder berhasil dibuat." : "File berhasil dibuat."
+        type === "folder"
+          ? "Folder berhasil dibuat."
+          : "File berhasil dibuat."
       );
     } catch (error: any) {
       setMessage(error.message || "Gagal membuat item.");
@@ -477,6 +488,7 @@ export default function Dashboard() {
 
   async function deleteFile(name: string) {
     if (busy) return;
+
     if (!window.confirm(`Hapus ${name}?`)) return;
 
     const target = fullPath(name);
@@ -519,7 +531,7 @@ export default function Dashboard() {
           const data = await response.json();
           errorMessage = data.error || errorMessage;
         } catch {
-          // Respons bukan JSON.
+          // Ignore non-JSON response.
         }
 
         throw new Error(errorMessage);
@@ -666,7 +678,9 @@ export default function Dashboard() {
                 type="password"
                 placeholder="Minimal 8 karakter"
                 autoComplete={
-                  mode === "login" ? "current-password" : "new-password"
+                  mode === "login"
+                    ? "current-password"
+                    : "new-password"
                 }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -719,7 +733,9 @@ export default function Dashboard() {
                 maxLength={6}
                 value={code}
                 onChange={(e) =>
-                  setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  setCode(
+                    e.target.value.replace(/\D/g, "").slice(0, 6)
+                  )
                 }
                 disabled={busy}
               />
@@ -752,7 +768,7 @@ export default function Dashboard() {
           <p>
             {mode === "signup"
               ? "Registrasi hanya menerima alamat Gmail."
-              : "Masuk menggunakan akun Gmail yang sudah terverifikasi."}
+              : "Masuk menggunakan Gmail dan password akun."}
           </p>
 
           <footer>BARA TERMINAL · ACCOUNT SYSTEM</footer>
@@ -761,7 +777,7 @@ export default function Dashboard() {
     );
   }
 
-  // MAIN DASHBOARD
+  // DASHBOARD
   return (
     <main className="shell">
       <header>
@@ -790,7 +806,7 @@ export default function Dashboard() {
           className={tab === "files" ? "active" : ""}
           onClick={() => {
             setTab("files");
-            refresh(".");
+            void refresh(".");
           }}
         >
           FILES
@@ -808,7 +824,7 @@ export default function Dashboard() {
             className={tab === "admin" ? "active" : ""}
             onClick={() => {
               setTab("admin");
-              loadUsers();
+              void loadUsers();
             }}
           >
             ADMIN
@@ -842,7 +858,7 @@ export default function Dashboard() {
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") run();
+                if (e.key === "Enter") void run();
               }}
               placeholder="Masukkan command Linux..."
               disabled={busy}
@@ -851,18 +867,18 @@ export default function Dashboard() {
             <button
               className="amber"
               disabled={busy || !command.trim()}
-              onClick={() => run()}
+              onClick={() => void run()}
             >
               {busy ? "RUNNING..." : "RUN"}
             </button>
           </div>
 
           <div className="actions">
-            <button onClick={() => run("pwd")} disabled={busy}>
+            <button onClick={() => void run("pwd")} disabled={busy}>
               PWD
             </button>
 
-            <button onClick={() => run("ls -la")} disabled={busy}>
+            <button onClick={() => void run("ls -la")} disabled={busy}>
               LIST FILES
             </button>
 
@@ -896,22 +912,28 @@ export default function Dashboard() {
             <button
               className="amber"
               disabled={busy}
-              onClick={() => refresh()}
+              onClick={() => void refresh()}
             >
               OPEN
             </button>
           </div>
 
           <div className="actions">
-            <button disabled={busy} onClick={() => refresh()}>
+            <button disabled={busy} onClick={() => void refresh()}>
               REFRESH
             </button>
 
-            <button disabled={busy} onClick={() => createItem("folder")}>
+            <button
+              disabled={busy}
+              onClick={() => void createItem("folder")}
+            >
               + FOLDER
             </button>
 
-            <button disabled={busy} onClick={() => createItem("file")}>
+            <button
+              disabled={busy}
+              onClick={() => void createItem("file")}
+            >
               + FILE
             </button>
 
@@ -919,7 +941,7 @@ export default function Dashboard() {
               disabled={busy}
               onClick={() => {
                 const parent = path.split("/").slice(0, -1).join("/");
-                refresh(parent || ".");
+                void refresh(parent || ".");
               }}
             >
               ↑ PARENT
@@ -939,9 +961,9 @@ export default function Dashboard() {
                     disabled={busy}
                     onClick={() => {
                       if (entry.type === "dir") {
-                        refresh(fullPath(entry.name));
+                        void refresh(fullPath(entry.name));
                       } else {
-                        openFile(entry.name);
+                        void openFile(entry.name);
                       }
                     }}
                   >
@@ -952,21 +974,21 @@ export default function Dashboard() {
                     <div className="actions">
                       <button
                         disabled={busy}
-                        onClick={() => openFile(entry.name)}
+                        onClick={() => void openFile(entry.name)}
                       >
                         EDIT
                       </button>
 
                       <button
                         disabled={busy}
-                        onClick={() => previewFile(entry.name)}
+                        onClick={() => void previewFile(entry.name)}
                       >
                         VIEW
                       </button>
 
                       <button
                         disabled={busy}
-                        onClick={() => downloadFile(entry.name)}
+                        onClick={() => void downloadFile(entry.name)}
                       >
                         DOWNLOAD
                       </button>
@@ -974,7 +996,7 @@ export default function Dashboard() {
                       <button
                         className="red"
                         disabled={busy}
-                        onClick={() => deleteFile(entry.name)}
+                        onClick={() => void deleteFile(entry.name)}
                       >
                         DELETE
                       </button>
@@ -1021,7 +1043,7 @@ export default function Dashboard() {
             <button
               className="lime"
               disabled={!file || busy}
-              onClick={saveFile}
+              onClick={() => void saveFile()}
             >
               {busy ? "SAVING..." : "SAVE FILE"}
             </button>
@@ -1043,7 +1065,7 @@ export default function Dashboard() {
             <button
               className="amber"
               disabled={busy}
-              onClick={loadUsers}
+              onClick={() => void loadUsers()}
             >
               REFRESH USERS
             </button>
@@ -1065,7 +1087,7 @@ export default function Dashboard() {
                 <div className="actions">
                   <button
                     disabled={busy}
-                    onClick={() => moderate(u.id, "ban")}
+                    onClick={() => void moderate(u.id, "ban")}
                   >
                     BAN 24H
                   </button>
@@ -1073,14 +1095,14 @@ export default function Dashboard() {
                   <button
                     className="red"
                     disabled={busy}
-                    onClick={() => moderate(u.id, "permanent")}
+                    onClick={() => void moderate(u.id, "permanent")}
                   >
                     PERMANENT BAN
                   </button>
 
                   <button
                     disabled={busy}
-                    onClick={() => moderate(u.id, "jail")}
+                    onClick={() => void moderate(u.id, "jail")}
                   >
                     JAIL 10M
                   </button>
@@ -1088,7 +1110,7 @@ export default function Dashboard() {
                   <button
                     className="amber"
                     disabled={busy}
-                    onClick={() => moderate(u.id, "kick")}
+                    onClick={() => void moderate(u.id, "kick")}
                   >
                     KICK
                   </button>
@@ -1096,7 +1118,7 @@ export default function Dashboard() {
                   <button
                     className="lime"
                     disabled={busy}
-                    onClick={() => moderate(u.id, "unban")}
+                    onClick={() => void moderate(u.id, "unban")}
                   >
                     UNBAN
                   </button>
@@ -1104,7 +1126,7 @@ export default function Dashboard() {
                   <button
                     className="lime"
                     disabled={busy}
-                    onClick={() => moderate(u.id, "unjail")}
+                    onClick={() => void moderate(u.id, "unjail")}
                   >
                     UNJAIL
                   </button>
