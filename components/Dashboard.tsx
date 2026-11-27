@@ -9,17 +9,6 @@ type Entry = {
   type: "dir" | "file";
 };
 
-type ApiResponse = {
-  stdout?: string;
-  stderr?: string;
-  error?: string;
-  exitCode?: number;
-  content?: string;
-  entries?: Entry[];
-  users?: any[];
-  ok?: boolean;
-};
-
 export default function Dashboard() {
   const [supabase] = useState(() =>
     createBrowserClient(
@@ -29,188 +18,92 @@ export default function Dashboard() {
   );
 
   const [user, setUser] = useState<any>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
 
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
 
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState("terminal");
 
   const [command, setCommand] = useState("pwd");
   const [output, setOutput] = useState(
-    "BARA TERMINAL v3.0\n" +
-    "Vercel Sandbox Edition\n" +
-    "Ketik command Linux lalu tekan RUN.\n\n"
+    "BARA TERMINAL v4.0\nLIVE CONSOLE READY\n"
   );
 
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
+  const [preview, setPreview] = useState("");
   const [users, setUsers] = useState<any[]>([]);
 
-  const adminEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
+  const isAdmin =
+    user?.email?.toLowerCase() ===
+    process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
 
-  // Membaca respons API dengan aman
-  async function api<T = ApiResponse>(
-    url: string,
-    options?: RequestInit
-  ): Promise<T> {
+  async function api(url: string, options?: RequestInit) {
     const response = await fetch(url, options);
     const raw = await response.text();
 
-    let data: any;
+    let data: any = {};
 
     try {
       data = raw ? JSON.parse(raw) : {};
     } catch {
-      throw new Error(
-        `Server mengirim respons bukan JSON (HTTP ${response.status}). ` +
-        `Periksa API atau konfigurasi deployment Vercel.`
-      );
+      throw new Error("Server mengirim respons tidak valid.");
     }
 
     if (!response.ok) {
-      throw new Error(
-        data.error ||
-        data.message ||
-        `Request gagal (HTTP ${response.status})`
-      );
+      throw new Error(data.error || "Request gagal.");
     }
 
-    return data as T;
+    return data;
   }
 
-  // Periksa sesi login
   useEffect(() => {
     let active = true;
 
-    async function checkUser() {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-
-        if (error) throw error;
-
-        if (active) {
-          setUser(data.user);
-        }
-      } catch {
-        if (active) setUser(null);
-      } finally {
-        if (active) setAuthLoading(false);
-      }
+    async function init() {
+      const { data } = await supabase.auth.getUser();
+      if (active) setUser(data.user);
+      if (active) setLoading(false);
     }
 
-    checkUser();
+    init();
 
-    const {
-      data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
+    const { data: listener } =
+      supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user || null);
+      });
 
     return () => {
       active = false;
-      subscription.unsubscribe();
+      listener.subscription.unsubscribe();
     };
   }, [supabase]);
 
-  // Login dan daftar
-  async function auth() {
-    if (!email.trim() || !password) {
-      setMessage("Email dan password wajib diisi.");
-      return;
-    }
-
+  async function sendCode() {
     setBusy(true);
     setMessage("");
 
     try {
-      if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password
-        });
-
-        if (error) throw error;
-
-        if (data.session) {
-          setUser(data.user);
-          setMessage("Pendaftaran berhasil.");
-        } else {
-          setMessage(
-            "Pendaftaran berhasil. Periksa email untuk konfirmasi akun."
-          );
-        }
-      } else {
-        const { data, error } =
-          await supabase.auth.signInWithPassword({
-            email: email.trim(),
-            password
-          });
-
-        if (error) throw error;
-
-        setUser(data.user);
-        setMessage("Login berhasil.");
-      }
-    } catch (e: any) {
-      setMessage(e.message || "Autentikasi gagal.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Jalankan command terminal
-  async function run(cmd?: string) {
-    const selectedCommand = (cmd ?? command).trim();
-
-    if (!selectedCommand || busy) return;
-
-    setBusy(true);
-    setOutput((old) => old + `$ ${selectedCommand}\n`);
-
-    try {
-      const data = await api<ApiResponse>("/api/terminal", {
+      const data = await api("/api/auth", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          command: selectedCommand
+          action: "send-code",
+          email,
+          password
         })
       });
 
-      setOutput((old) =>
-        old +
-        (data.stdout || "") +
-        (data.stderr || "") +
-        `\n[exit ${data.exitCode ?? "—"}]\n\n`
-      );
-    } catch (e: any) {
-      setOutput((old) =>
-        old + `ERROR: ${e.message || "Terminal error"}\n\n`
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Refresh file manager
-  async function refresh(p = path) {
-    setBusy(true);
-    setMessage("");
-
-    try {
-      const data = await api<ApiResponse>(
-        `/api/files?path=${encodeURIComponent(p)}`
-      );
-
-      setEntries(data.entries || []);
-      setPath(p);
+      setCodeSent(true);
+      setMessage(data.message);
     } catch (e: any) {
       setMessage(e.message);
     } finally {
@@ -218,19 +111,112 @@ export default function Dashboard() {
     }
   }
 
-  // Buka file
-  async function openFile(name: string) {
-    const full = path === "." ? name : `${path}/${name}`;
-
+  async function verifyCode() {
     setBusy(true);
     setMessage("");
 
     try {
-      const data = await api<ApiResponse>("/api/files", {
+      await api("/api/auth", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "verify-code",
+          email,
+          code
+        })
+      });
+
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user);
+      setMessage("Email berhasil diverifikasi.");
+    } catch (e: any) {
+      setMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function login() {
+    setBusy(true);
+    setMessage("");
+
+    try {
+      await api("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "login",
+          email,
+          password
+        })
+      });
+
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user);
+      setMessage("Login berhasil.");
+    } catch (e: any) {
+      setMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function run(cmd = command) {
+    const selected = cmd.trim();
+    if (!selected || busy) return;
+
+    setBusy(true);
+
+    // Menghapus output sebelumnya setiap kali command baru dijalankan.
+    setOutput("$ " + selected + "\nMenjalankan...\n");
+
+    try {
+      const data = await api("/api/terminal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: selected })
+      });
+
+      setOutput(
+        "$ " + selected + "\n" +
+        (data.stdout || "") +
+        (data.stderr || "") +
+        "\n[exit " + data.exitCode + "]\n"
+      );
+    } catch (e: any) {
+      setOutput("$ " + selected + "\nERROR: " + e.message + "\n");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refresh(p = path) {
+    setBusy(true);
+
+    try {
+      const data = await api(
+        "/api/files?path=" + encodeURIComponent(p)
+      );
+
+      setEntries(data.entries || []);
+      setPath(p);
+      setMessage("Folder diperbarui.");
+    } catch (e: any) {
+      setMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openFile(name: string) {
+    const full = path === "." ? name : path + "/" + name;
+
+    setBusy(true);
+
+    try {
+      const data = await api("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "read",
           path: full
@@ -238,11 +224,12 @@ export default function Dashboard() {
       });
 
       if (data.exitCode !== 0) {
-        throw new Error(data.stderr || "Tidak bisa membuka file.");
+        throw new Error(data.stderr || "File tidak bisa dibuka.");
       }
 
       setFile(full);
       setContent(data.content || "");
+      setPreview("");
       setTab("editor");
     } catch (e: any) {
       setMessage(e.message);
@@ -251,19 +238,15 @@ export default function Dashboard() {
     }
   }
 
-  // Simpan file
   async function saveFile() {
     if (!file) return;
 
     setBusy(true);
-    setMessage("");
 
     try {
-      const data = await api<ApiResponse>("/api/files", {
+      await api("/api/files", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "write",
           path: file,
@@ -271,11 +254,7 @@ export default function Dashboard() {
         })
       });
 
-      setMessage(
-        data.ok
-          ? "File berhasil disimpan."
-          : data.stderr || "Gagal menyimpan file."
-      );
+      setMessage("File berhasil disimpan.");
     } catch (e: any) {
       setMessage(e.message);
     } finally {
@@ -283,16 +262,11 @@ export default function Dashboard() {
     }
   }
 
-  // Buat file atau folder
   async function createItem(type: "file" | "folder") {
-    const name = prompt(
-      type === "folder" ? "Nama folder?" : "Nama file?"
-    );
-
+    const name = prompt("Nama " + type + ":");
     if (!name?.trim()) return;
 
-    const target =
-      path === "." ? name.trim() : `${path}/${name.trim()}`;
+    const target = path === "." ? name : path + "/" + name;
 
     setBusy(true);
 
@@ -300,20 +274,13 @@ export default function Dashboard() {
       if (type === "folder") {
         await api("/api/files", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            action: "mkdir",
-            path: target
-          })
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "mkdir", path: target })
         });
       } else {
         await api("/api/files", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "write",
             path: target,
@@ -321,12 +288,6 @@ export default function Dashboard() {
           })
         });
       }
-
-      setMessage(
-        type === "folder"
-          ? "Folder berhasil dibuat."
-          : "File berhasil dibuat."
-      );
 
       await refresh(path);
     } catch (e: any) {
@@ -336,12 +297,80 @@ export default function Dashboard() {
     }
   }
 
-  // Admin: ambil daftar user
-  async function adminLoad() {
+  async function deleteFile(name: string) {
+    const target = path === "." ? name : path + "/" + name;
+    if (!confirm("Hapus " + name + "?")) return;
+
     setBusy(true);
 
     try {
-      const data = await api<ApiResponse>("/api/admin/users");
+      await api("/api/files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          path: target
+        })
+      });
+
+      setMessage("File berhasil dihapus.");
+      await refresh(path);
+    } catch (e: any) {
+      setMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadFile(name: string) {
+    const target = path === "." ? name : path + "/" + name;
+
+    try {
+      const response = await fetch(
+        "/api/files?action=download&path=" +
+        encodeURIComponent(target)
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Download gagal.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      a.href = url;
+      a.download = name;
+      a.click();
+
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setMessage(e.message);
+    }
+  }
+
+  async function previewFile(name: string) {
+    const target = path === "." ? name : path + "/" + name;
+
+    try {
+      const data = await api(
+        "/api/files?action=preview&path=" +
+        encodeURIComponent(target)
+      );
+
+      setPreview(data.content);
+      setMessage("Preview: " + data.name);
+    } catch (e: any) {
+      setMessage(e.message);
+    }
+  }
+
+  async function loadUsers() {
+    setBusy(true);
+
+    try {
+      const data = await api("/api/admin/users");
       setUsers(data.users || []);
     } catch (e: any) {
       setMessage(e.message);
@@ -350,37 +379,21 @@ export default function Dashboard() {
     }
   }
 
-  // Admin: aksi akun
-  async function adminAction(id: string, action: string) {
-    const labels: Record<string, string> = {
-      ban: "BAN 24 JAM",
-      permanent: "PERMANENT BAN",
-      unban: "UNBAN"
-    };
-
-    if (!confirm(`Yakin melakukan ${labels[action] || action}?`)) {
-      return;
-    }
+  async function moderate(id: string, action: string) {
+    const reason = prompt("Alasan tindakan admin:");
+    if (reason === null) return;
 
     setBusy(true);
 
     try {
-      const data = await api<ApiResponse>("/api/admin/users", {
+      await api("/api/admin/users", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          id,
-          action
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action, reason })
       });
 
-      setMessage(
-        data.ok ? "Aksi admin berhasil." : "Aksi admin gagal."
-      );
-
-      await adminLoad();
+      setMessage("Aksi " + action + " berhasil.");
+      await loadUsers();
     } catch (e: any) {
       setMessage(e.message);
     } finally {
@@ -388,155 +401,119 @@ export default function Dashboard() {
     }
   }
 
-  // Logout
   async function logout() {
     await supabase.auth.signOut();
     setUser(null);
     setTab("terminal");
-    setMessage("Berhasil logout.");
+    setOutput("BARA TERMINAL\nSession ended.\n");
   }
 
-  if (authLoading) {
-    return (
-      <main className="auth">
-        <section className="authCard">
-          <small>LIVE CONSOLE</small>
-          <h1>BARA TERMINAL</h1>
-          <p>Memeriksa sesi akun...</p>
-        </section>
-      </main>
-    );
+  if (loading) {
+    return <main className="auth"><h1>BARA LOADING...</h1></main>;
   }
 
-  // Halaman login
   if (!user) {
     return (
       <main className="auth">
         <section className="authCard">
-          <small>LIVE CONSOLE / ACCOUNT</small>
-
+          <small>BARA ACCOUNT SYSTEM</small>
           <h1>BARA TERMINAL</h1>
-          <p>Workspace Linux personal lo.</p>
+
+          <div className="actions">
+            <button onClick={() => {
+              setMode("login");
+              setCodeSent(false);
+              setMessage("");
+            }}>
+              LOGIN
+            </button>
+            <button onClick={() => {
+              setMode("signup");
+              setCodeSent(false);
+              setMessage("");
+            }}>
+              REGISTER
+            </button>
+          </div>
 
           <input
-            placeholder="Email"
+            type="email"
+            placeholder="nama@gmail.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            type="email"
-            autoComplete="email"
           />
 
           <input
-            placeholder="Password"
+            type="password"
+            placeholder="Password minimal 8 karakter"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            type="password"
-            autoComplete={
-              mode === "login" ? "current-password" : "new-password"
-            }
-            onKeyDown={(e) => e.key === "Enter" && auth()}
           />
 
-          <button
-            className="lime"
-            disabled={busy}
-            onClick={auth}
-          >
-            {busy
-              ? "TUNGGU..."
-              : mode === "login"
-                ? "LOGIN"
-                : "DAFTAR"}
-          </button>
-
-          <button
-            className="plain"
-            onClick={() => {
-              setMode(mode === "login" ? "signup" : "login");
-              setMessage("");
-            }}
-          >
-            {mode === "login"
-              ? "Belum punya akun? Daftar"
-              : "Sudah punya akun? Login"}
-          </button>
+          {mode === "login" ? (
+            <button className="lime" disabled={busy} onClick={login}>
+              {busy ? "LOADING..." : "LOGIN"}
+            </button>
+          ) : (
+            <>
+              {!codeSent ? (
+                <button className="lime" disabled={busy} onClick={sendCode}>
+                  {busy ? "SENDING..." : "SEND VERIFICATION CODE"}
+                </button>
+              ) : (
+                <>
+                  <input
+                    placeholder="6 digit verification code"
+                    value={code}
+                    maxLength={6}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  />
+                  <button className="lime" disabled={busy} onClick={verifyCode}>
+                    VERIFY EMAIL
+                  </button>
+                </>
+              )}
+            </>
+          )}
 
           {message && <p className="notice">{message}</p>}
+          <p>Registrasi hanya menerima Gmail.</p>
         </section>
       </main>
     );
   }
-
-  const isAdmin =
-    user.email?.toLowerCase() === adminEmail?.toLowerCase();
 
   return (
     <main className="shell">
       <header>
         <div>
-          <small>LIVE CONSOLE</small>
-          <h1>
-            BARA TERMINAL <span className="pill">SAFE MODE</span>
-          </h1>
+          <small>LIVE CONSOLE / AUTHENTICATED</small>
+          <h1>BARA TERMINAL <span className="pill">SAFE MODE</span></h1>
           <p>{user.email}</p>
         </div>
-
-        <button className="plain" onClick={logout}>
-          LOGOUT
-        </button>
+        <button onClick={logout}>LOGOUT</button>
       </header>
 
       <nav>
-        <button
-          className={tab === "terminal" ? "active" : ""}
-          onClick={() => setTab("terminal")}
-        >
-          TERMINAL
-        </button>
-
-        <button
-          className={tab === "files" ? "active" : ""}
-          onClick={() => {
-            setTab("files");
-            refresh(".");
-          }}
-        >
-          FILES
-        </button>
-
-        <button
-          className={tab === "editor" ? "active" : ""}
-          onClick={() => setTab("editor")}
-        >
-          EDITOR
-        </button>
-
+        <button className={tab === "terminal" ? "active" : ""}
+          onClick={() => setTab("terminal")}>TERMINAL</button>
+        <button className={tab === "files" ? "active" : ""}
+          onClick={() => { setTab("files"); refresh("."); }}>FILES</button>
+        <button className={tab === "editor" ? "active" : ""}
+          onClick={() => setTab("editor")}>EDITOR</button>
         {isAdmin && (
-          <button
-            className={tab === "admin" ? "active" : ""}
-            onClick={() => {
-              setTab("admin");
-              adminLoad();
-            }}
-          >
-            ADMIN
-          </button>
+          <button className={tab === "admin" ? "active" : ""}
+            onClick={() => { setTab("admin"); loadUsers(); }}>ADMIN</button>
         )}
       </nav>
 
       {message && (
         <div className="notice">
           {message}
-          <button
-            className="plain"
-            onClick={() => setMessage("")}
-          >
-            ×
-          </button>
+          <button onClick={() => setMessage("")}>×</button>
         </div>
       )}
 
-      {/* TERMINAL */}
       {tab === "terminal" && (
         <section className="panel">
           <div className="panelTitle">
@@ -548,212 +525,134 @@ export default function Dashboard() {
 
           <div className="command">
             <b>$</b>
-
             <input
               value={command}
               onChange={(e) => setCommand(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") run();
-              }}
-              placeholder="npm install, python app.py, ls -la ..."
+              onKeyDown={(e) => e.key === "Enter" && run()}
+              placeholder="python3 bot.py, ls -la, npm install..."
             />
-
-            <button
-              className="amber"
-              onClick={() => run()}
-              disabled={busy}
-            >
-              {busy ? "RUNNING..." : "RUN ↗"}
+            <button className="amber" disabled={busy} onClick={() => run()}>
+              {busy ? "RUNNING..." : "RUN"}
             </button>
           </div>
 
           <div className="actions">
-            <button
-              className="lime"
-              disabled={busy}
-              onClick={() => {
-                setCommand("pwd");
-                run("pwd");
-              }}
-            >
-              START / PWD
-            </button>
-
-            <button
-              className="amber"
-              disabled={busy}
-              onClick={() =>
-                run("pkill -f 'python|node' || true")
-              }
-            >
-              STOP PROCESSES
-            </button>
-
-            <button
-              className="red"
-              onClick={() => setOutput("")}
-            >
-              CLEAR LOG
-            </button>
+            <button onClick={() => run("pwd")}>PWD</button>
+            <button onClick={() => run("ls -la")}>LIST FILES</button>
+            <button className="red" onClick={() => setOutput("")}>CLEAR</button>
           </div>
         </section>
       )}
 
-      {/* FILE MANAGER */}
       {tab === "files" && (
         <section className="panel">
-          <small>YOUR STORAGE</small>
-          <h2>File manager</h2>
+          <small>WORKSPACE STORAGE</small>
+          <h2>FILE MANAGER</h2>
 
           <div className="command">
-            <input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="folder/subfolder"
-            />
-
-            <button
-              className="amber"
-              disabled={busy}
-              onClick={() => refresh()}
-            >
-              OPEN
-            </button>
+            <input value={path} onChange={(e) => setPath(e.target.value)} />
+            <button className="amber" onClick={() => refresh()}>OPEN</button>
           </div>
 
           <div className="actions">
-            <button
-              disabled={busy}
-              onClick={() => refresh()}
-            >
-              REFRESH
-            </button>
-
-            <button
-              className="amber"
-              disabled={busy}
-              onClick={() => createItem("folder")}
-            >
-              + FOLDER
-            </button>
-
-            <button
-              disabled={busy}
-              onClick={() => createItem("file")}
-            >
-              + FILE
-            </button>
+            <button onClick={() => refresh()}>REFRESH</button>
+            <button onClick={() => createItem("folder")}>+ FOLDER</button>
+            <button onClick={() => createItem("file")}>+ FILE</button>
           </div>
 
           <div className="fileList">
-            {entries.length === 0 ? (
-              <p>Folder kosong atau belum dimuat.</p>
-            ) : (
-              entries.map((entry) => (
-                <div className="fileRow" key={entry.name}>
-                  <button
-                    className="fileName"
-                    onClick={() => {
-                      if (entry.type === "dir") {
-                        refresh(
-                          path === "."
-                            ? entry.name
-                            : `${path}/${entry.name}`
-                        );
-                      } else {
-                        openFile(entry.name);
-                      }
-                    }}
-                  >
-                    {entry.type === "dir" ? "📁" : "▤"}{" "}
-                    {entry.name}
-                  </button>
+            {entries.map((entry) => (
+              <div className="fileRow" key={entry.name}>
+                <button className="fileName" onClick={() => {
+                  if (entry.type === "dir") {
+                    refresh(path === "." ? entry.name : path + "/" + entry.name);
+                  } else {
+                    openFile(entry.name);
+                  }
+                }}>
+                  {entry.type === "dir" ? "📁" : "📄"} {entry.name}
+                </button>
 
-                  <span>{entry.type}</span>
-                </div>
-              ))
-            )}
+                {entry.type === "file" && (
+                  <div className="actions">
+                    <button title="Edit" onClick={() => openFile(entry.name)}>✏️</button>
+                    <button title="Preview" onClick={() => previewFile(entry.name)}>👁</button>
+                    <button title="Download" onClick={() => downloadFile(entry.name)}>⬇</button>
+                    <button title="Delete" className="red" onClick={() => deleteFile(entry.name)}>🗑</button>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
+
+          {preview && (
+            <section>
+              <h3>PREVIEW</h3>
+              <pre className="console">{preview}</pre>
+              <button onClick={() => setPreview("")}>CLOSE PREVIEW</button>
+            </section>
+          )}
         </section>
       )}
 
-      {/* EDITOR */}
       {tab === "editor" && (
         <section className="panel">
-          <small>CODE EDITOR</small>
-          <h2>{file || "Pilih file dari File Manager"}</h2>
+          <small>CODE EDITOR / SAVE ENABLED</small>
+          <h2>{file || "Pilih file dari Files"}</h2>
 
           <textarea
             className="editor"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             spellCheck={false}
-            placeholder="Isi file akan tampil di sini..."
           />
 
           <div className="actions">
-            <button
-              className="amber"
-              onClick={saveFile}
-              disabled={!file || busy}
-            >
+            <button className="lime" disabled={!file || busy} onClick={saveFile}>
               {busy ? "SAVING..." : "SAVE FILE"}
             </button>
-
-            <button onClick={() => setTab("files")}>
-              BACK TO FILES
-            </button>
+            <button onClick={() => setTab("files")}>BACK TO FILES</button>
           </div>
         </section>
       )}
 
-      {/* ADMIN */}
       {tab === "admin" && isAdmin && (
         <section className="panel">
-          <small>ADMIN CONTROL</small>
-          <h2>Account history</h2>
-
-          <button
-            className="amber"
-            onClick={adminLoad}
-            disabled={busy}
-          >
-            REFRESH USERS
-          </button>
+          <small>ADMIN CONTROL CENTER</small>
+          <h2>USER MODERATION</h2>
+          <button className="amber" onClick={loadUsers}>REFRESH USERS</button>
 
           {users.map((u) => (
             <div className="userRow" key={u.id}>
               <b>{u.email}</b>
-
               <small>
-                Joined: {u.created_at?.slice(0, 10)}
+                Status: {u.moderation?.status || "active"}
                 {" · "}
-                Last login:{" "}
-                {u.last_sign_in_at?.slice(0, 10) || "—"}
+                Joined: {u.created_at?.slice(0, 10)}
               </small>
 
               <div className="actions">
-                <button
-                  disabled={busy}
-                  onClick={() => adminAction(u.id, "ban")}
-                >
+                <button disabled={busy} onClick={() => moderate(u.id, "ban")}>
                   BAN 24H
                 </button>
-
-                <button
-                  className="red"
-                  disabled={busy}
-                  onClick={() => adminAction(u.id, "permanent")}
-                >
-                  PERMA BAN
+                <button className="red" disabled={busy}
+                  onClick={() => moderate(u.id, "permanent")}>
+                  PERMANENT BAN
                 </button>
-
-                <button
-                  className="lime"
-                  disabled={busy}
-                  onClick={() => adminAction(u.id, "unban")}
-                >
+                <button disabled={busy} onClick={() => moderate(u.id, "jail")}>
+                  JAIL 10M
+                </button>
+                <button className="amber" disabled={busy}
+                  onClick={() => moderate(u.id, "kick")}>
+                  KICK
+                </button>
+                <button className="lime" disabled={busy}
+                  onClick={() => moderate(u.id, "unban")}>
                   UNBAN
+                </button>
+                <button className="lime" disabled={busy}
+                  onClick={() => moderate(u.id, "unjail")}>
+                  UNJAIL
                 </button>
               </div>
             </div>
@@ -761,9 +660,8 @@ export default function Dashboard() {
         </section>
       )}
 
-      <footer>
-        BARA TERMINAL v3.0 · NEO BRUTALISM · VERCEL SANDBOX
-      </footer>
+      <footer>BARA TERMINAL v4.0 · LINUX WORKSPACE · SUPABASE AUTH</footer>
     </main>
   );
-}
+  }
+  
