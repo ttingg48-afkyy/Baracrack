@@ -14,12 +14,21 @@ export async function createClient() {
         getAll() {
           return jar.getAll();
         },
-        setAll(items) {
+
+        setAll(
+          items: {
+            name: string;
+            value: string;
+            options?: any;
+          }[]
+        ) {
           try {
             items.forEach(({ name, value, options }) => {
               jar.set(name, value, options);
             });
-          } catch {}
+          } catch {
+            // Cookie writes may fail in Server Components.
+          }
         }
       }
     }
@@ -30,7 +39,9 @@ export function adminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !key) throw new Error("Supabase admin environment belum lengkap.");
+  if (!url || !key) {
+    throw new Error("Supabase admin environment belum lengkap.");
+  }
 
   return createAdminClient(url, key, {
     auth: {
@@ -95,6 +106,7 @@ export function isAdminEmail(email?: string | null) {
   return Boolean(
     email &&
     process.env.BARA_ADMIN_EMAIL &&
-    email.toLowerCase() === process.env.BARA_ADMIN_EMAIL.toLowerCase()
+    email.toLowerCase() ===
+      process.env.BARA_ADMIN_EMAIL.toLowerCase()
   );
 }
