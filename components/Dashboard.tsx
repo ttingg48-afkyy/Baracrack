@@ -1,25 +1,15 @@
-
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
+import JsonPanel from "@/components/JsonPanel";
 
 type Entry = {
   name: string;
   type: "dir" | "file";
 };
 
-type AdminUser = {
-  id: string;
-  email: string;
-  created_at?: string;
-  moderation?: {
-    status?: string;
-    reason?: string;
-  };
-};
-
-type Tab = "terminal" | "files" | "editor" | "admin";
+type Tab = "terminal" | "files" | "editor";
 
 export default function Dashboard() {
   const [supabase] = useState(() =>
@@ -41,6 +31,7 @@ export default function Dashboard() {
 
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<Tab>("terminal");
+  const [showJsonPanel, setShowJsonPanel] = useState(false);
 
   const [command, setCommand] = useState("");
   const [output, setOutput] = useState(
@@ -53,14 +44,6 @@ export default function Dashboard() {
   const [content, setContent] = useState("");
   const [preview, setPreview] = useState("");
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
-
-  const isAdmin =
-    !!user?.email &&
-    user.email.toLowerCase() ===
-      (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").toLowerCase();
-
-  // API HELPER
   const api = useCallback(
     async (url: string, options?: RequestInit) => {
       const response = await fetch(url, {
@@ -129,7 +112,7 @@ export default function Dashboard() {
     setMessage("");
   }
 
-  // SEND GMAIL OTP THROUGH BARA API
+  // SEND GMAIL OTP
   async function sendCode() {
     if (busy) return;
 
@@ -169,7 +152,7 @@ export default function Dashboard() {
     }
   }
 
-  // VERIFY BARA OTP THEN LOGIN
+  // VERIFY OTP
   async function verifyCode() {
     if (busy) return;
 
@@ -193,8 +176,6 @@ export default function Dashboard() {
         }),
       });
 
-      // Supabase email has now been confirmed by BARA API.
-      // Create the user's normal password session.
       const { data, error } =
         await supabase.auth.signInWithPassword({
           email: normalizedEmail,
@@ -217,7 +198,7 @@ export default function Dashboard() {
     }
   }
 
-  // NORMAL LOGIN: NO OTP
+  // LOGIN
   async function login() {
     if (busy) return;
 
@@ -269,11 +250,24 @@ export default function Dashboard() {
     setBusy(true);
 
     try {
+      // Tutup sesi panel JSON sebelum logout.
+      try {
+        await fetch("/api/control", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "lock" }),
+        });
+      } catch {
+        // Lanjutkan logout walaupun permintaan lock gagal.
+      }
+
       const { error } = await supabase.auth.signOut();
 
       if (error) throw error;
 
       setUser(null);
+      setShowJsonPanel(false);
       setTab("terminal");
       setCommand("");
       setOutput("BARA TERMINAL V4.0\nSession ended.\n");
@@ -294,7 +288,6 @@ export default function Dashboard() {
 
     if (!selected || busy) return;
 
-    // Clear only the input, never the existing log.
     setCommand("");
     setBusy(true);
 
@@ -531,7 +524,7 @@ export default function Dashboard() {
           const data = await response.json();
           errorMessage = data.error || errorMessage;
         } catch {
-          // Ignore non-JSON response.
+          // Abaikan respons non-JSON.
         }
 
         throw new Error(errorMessage);
@@ -568,49 +561,6 @@ export default function Dashboard() {
       setMessage("Preview: " + name);
     } catch (error: any) {
       setMessage(error.message || "Preview gagal.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // ADMIN
-  async function loadUsers() {
-    if (busy) return;
-
-    setBusy(true);
-
-    try {
-      const data = await api("/api/admin/users");
-      setUsers(data.users || []);
-    } catch (error: any) {
-      setMessage(error.message || "Gagal mengambil daftar user.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function moderate(id: string, action: string) {
-    if (busy) return;
-
-    const reason = window.prompt("Alasan tindakan admin:");
-
-    if (reason === null) return;
-
-    setBusy(true);
-
-    try {
-      await api("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, action, reason }),
-      });
-
-      const data = await api("/api/admin/users");
-      setUsers(data.users || []);
-
-      setMessage(`Aksi ${action} berhasil.`);
-    } catch (error: any) {
-      setMessage(error.message || "Moderasi gagal.");
     } finally {
       setBusy(false);
     }
@@ -789,10 +739,23 @@ export default function Dashboard() {
           <p>{user.email}</p>
         </div>
 
-        <button className="red" onClick={logout} disabled={busy}>
-          LOGOUT
-        </button>
+        <div className="headerActions">
+          <button
+            className="amber"
+            onClick={() => setShowJsonPanel(true)}
+          >
+            JSON ↗
+          </button>
+
+          <button className="red" onClick={logout} disabled={busy}>
+            LOGOUT
+          </button>
+        </div>
       </header>
+
+      {showJsonPanel && (
+        <JsonPanel onClose={() => setShowJsonPanel(false)} />
+      )}
 
       <nav>
         <button
@@ -818,18 +781,6 @@ export default function Dashboard() {
         >
           EDITOR
         </button>
-
-        {isAdmin && (
-          <button
-            className={tab === "admin" ? "active" : ""}
-            onClick={() => {
-              setTab("admin");
-              void loadUsers();
-            }}
-          >
-            ADMIN
-          </button>
-        )}
       </nav>
 
       {message && (
@@ -1052,88 +1003,6 @@ export default function Dashboard() {
               BACK TO FILES
             </button>
           </div>
-        </section>
-      )}
-
-      {/* ADMIN */}
-      {tab === "admin" && isAdmin && (
-        <section className="panel">
-          <small>ADMIN CONTROL CENTER</small>
-          <h2>USER MODERATION</h2>
-
-          <div className="actions">
-            <button
-              className="amber"
-              disabled={busy}
-              onClick={() => void loadUsers()}
-            >
-              REFRESH USERS
-            </button>
-          </div>
-
-          {users.length === 0 ? (
-            <p>Belum ada data user atau daftar belum dimuat.</p>
-          ) : (
-            users.map((u) => (
-              <div className="userRow" key={u.id}>
-                <b>{u.email}</b>
-
-                <small>
-                  Status: {u.moderation?.status || "active"}
-                  {" · "}
-                  Joined: {u.created_at?.slice(0, 10) || "-"}
-                </small>
-
-                <div className="actions">
-                  <button
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "ban")}
-                  >
-                    BAN 24H
-                  </button>
-
-                  <button
-                    className="red"
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "permanent")}
-                  >
-                    PERMANENT BAN
-                  </button>
-
-                  <button
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "jail")}
-                  >
-                    JAIL 10M
-                  </button>
-
-                  <button
-                    className="amber"
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "kick")}
-                  >
-                    KICK
-                  </button>
-
-                  <button
-                    className="lime"
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "unban")}
-                  >
-                    UNBAN
-                  </button>
-
-                  <button
-                    className="lime"
-                    disabled={busy}
-                    onClick={() => void moderate(u.id, "unjail")}
-                  >
-                    UNJAIL
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
         </section>
       )}
 
