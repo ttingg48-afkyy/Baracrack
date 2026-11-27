@@ -1,7 +1,7 @@
-
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase";
 import { userSandbox, safePath } from "@/lib/sandbox";
+import { assertAccountAccess } from "@/lib/control";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,9 +10,25 @@ function quote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+function errorStatus(error: any) {
+  if (error?.message === "UNAUTHORIZED") return 401;
+
+  if (
+    error?.message === "ACCOUNT_BANNED" ||
+    error?.message === "ACCOUNT_JAILED"
+  ) {
+    return 403;
+  }
+
+  return 500;
+}
+
 export async function GET(req: Request) {
   try {
     const user = await requireUser();
+
+    await assertAccountAccess(user.email || "");
+
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "list";
     const target = safePath(url.searchParams.get("path") || ".");
@@ -23,10 +39,12 @@ export async function GET(req: Request) {
         cmd: "bash",
         args: [
           "-lc",
-          "test -f " + quote(target) +
-          " && base64 -w0 " + quote(target)
+          "test -f " +
+            quote(target) +
+            " && base64 -w0 " +
+            quote(target),
         ],
-        timeoutMs: 20000
+        timeoutMs: 20000,
       });
 
       if (result.exitCode !== 0) {
@@ -47,7 +65,7 @@ export async function GET(req: Request) {
         return NextResponse.json({
           name,
           content: buffer.toString("utf8"),
-          size: buffer.length
+          size: buffer.length,
         });
       }
 
@@ -58,8 +76,8 @@ export async function GET(req: Request) {
             'attachment; filename="' +
             name.replace(/[^a-zA-Z0-9._-]/g, "_") +
             '"',
-          "Cache-Control": "no-store"
-        }
+          "Cache-Control": "no-store",
+        },
       });
     }
 
@@ -67,10 +85,11 @@ export async function GET(req: Request) {
       cmd: "bash",
       args: [
         "-lc",
-        "find " + quote(target) +
-        " -maxdepth 1 -mindepth 1 -printf '%y\\t%f\\n' | sort"
+        "find " +
+          quote(target) +
+          " -maxdepth 1 -mindepth 1 -printf '%y\\t%f\\n' | sort",
       ],
-      timeoutMs: 20000
+      timeoutMs: 20000,
     });
 
     const entries = (await result.stdout())
@@ -81,19 +100,20 @@ export async function GET(req: Request) {
 
         return {
           type: type === "d" ? "dir" : "file",
-          name: name.join("\t")
+          name: name.join("\t"),
         };
       });
 
-    return NextResponse.json({ path: target, entries });
-  } catch (e: any) {
-    const status = e.message === "UNAUTHORIZED" ? 401 :
-      e.message === "ACCOUNT_BANNED" || e.message === "ACCOUNT_JAILED" ? 403 :
-      500;
+    return NextResponse.json({
+      path: target,
+      entries,
+    });
+  } catch (error: any) {
+    console.error("[BARA FILE GET]", error);
 
     return NextResponse.json(
-      { error: e.message || "File error" },
-      { status }
+      { error: error.message || "File error" },
+      { status: errorStatus(error) }
     );
   }
 }
@@ -101,18 +121,24 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
+
+    await assertAccountAccess(user.email || "");
+
     const body = await req.json();
     const action = String(body.action || "");
     const target = safePath(String(body.path || ""));
     const sbx = await userSandbox(user.id);
 
     if (action === "mkdir") {
-      const r = await sbx.runCommand({
+      const result = await sbx.runCommand({
         cmd: "mkdir",
-        args: ["-p", target]
+        args: ["-p", target],
       });
 
-      return NextResponse.json({ ok: r.exitCode === 0 });
+      return NextResponse.json({
+        ok: result.exitCode === 0,
+        exitCode: result.exitCode,
+      });
     }
 
     if (action === "delete") {
@@ -123,27 +149,27 @@ export async function POST(req: Request) {
         );
       }
 
-      const r = await sbx.runCommand({
+      const result = await sbx.runCommand({
         cmd: "rm",
-        args: ["-rf", "--", target]
+        args: ["-rf", "--", target],
       });
 
       return NextResponse.json({
-        ok: r.exitCode === 0,
-        exitCode: r.exitCode
+        ok: result.exitCode === 0,
+        exitCode: result.exitCode,
       });
     }
 
     if (action === "read") {
-      const r = await sbx.runCommand({
+      const result = await sbx.runCommand({
         cmd: "cat",
-        args: [target]
+        args: [target],
       });
 
       return NextResponse.json({
-        content: await r.stdout(),
-        stderr: await r.stderr(),
-        exitCode: r.exitCode
+        content: await result.stdout(),
+        stderr: await result.stderr(),
+        exitCode: result.exitCode,
       });
     }
 
@@ -159,22 +185,27 @@ export async function POST(req: Request) {
       );
 
       const command =
-        "mkdir -p " + quote(parent) +
-        " && printf '%s' " + quote(encoded) +
-        " | base64 -d > " + quote(target);
+        "mkdir -p " +
+        quote(parent || ".") +
+        " && printf '%s' " +
+        quote(encoded) +
+        " | base64 -d > " +
+        quote(target);
 
-      const r = await sbx.runCommand({
+      const result = await sbx.runCommand({
         cmd: "bash",
         args: ["-lc", command],
-        timeoutMs: 20000
+        timeoutMs: 20000,
       });
 
       return NextResponse.json(
         {
-          ok: r.exitCode === 0,
-          stderr: await r.stderr()
+          ok: result.exitCode === 0,
+          stderr: await result.stderr(),
         },
-        { status: r.exitCode === 0 ? 200 : 500 }
+        {
+          status: result.exitCode === 0 ? 200 : 500,
+        }
       );
     }
 
@@ -182,14 +213,12 @@ export async function POST(req: Request) {
       { error: "Action tidak dikenal." },
       { status: 400 }
     );
-  } catch (e: any) {
-    const status = e.message === "UNAUTHORIZED" ? 401 :
-      e.message === "ACCOUNT_BANNED" || e.message === "ACCOUNT_JAILED" ? 403 :
-      500;
+  } catch (error: any) {
+    console.error("[BARA FILE POST]", error);
 
     return NextResponse.json(
-      { error: e.message || "File error" },
-      { status }
+      { error: error.message || "File error" },
+      { status: errorStatus(error) }
     );
   }
-  }
+}
