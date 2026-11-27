@@ -1,6 +1,5 @@
-
 import { NextRequest, NextResponse } from "next/server";
-import { adminClient } from "@/lib/supabase";
+import { adminClient, requireUser } from "@/lib/supabase";
 import {
   createPanelToken,
   hasPanelSession,
@@ -11,33 +10,52 @@ import {
 export const runtime = "nodejs";
 
 const COOKIE_NAME = "bara_panel_session";
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
+
+function panelCookie(response: NextResponse, value: string, maxAge: number) {
+  response.cookies.set(COOKIE_NAME, value, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge,
+  });
+
+  return response;
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const action = String(body.action || "");
+    // Semua aksi panel wajib berasal dari user yang sudah login.
+    await requireUser();
 
+    const body = await req.json();
+    const action = String(body.action || "").toLowerCase();
+
+    // UNLOCK PANEL
     if (action === "unlock") {
-      if (!verifyPin(String(body.pin || ""))) {
+      const pin = String(body.pin || "");
+
+      if (!verifyPin(pin)) {
         return NextResponse.json(
           { error: "PIN salah." },
           { status: 401 }
         );
       }
 
-      const response = NextResponse.json({ ok: true });
-
-      response.cookies.set(COOKIE_NAME, createPanelToken(), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-        path: "/",
-        maxAge: 7 * 24 * 60 * 60,
+      const response = NextResponse.json({
+        ok: true,
+        message: "Panel berhasil dibuka.",
       });
 
-      return response;
+      return panelCookie(
+        response,
+        createPanelToken(),
+        SESSION_MAX_AGE
+      );
     }
 
+    // Aksi berikutnya wajib memiliki sesi panel.
     if (!(await hasPanelSession())) {
       return NextResponse.json(
         { error: "Panel terkunci. Masukkan PIN." },
@@ -45,40 +63,61 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // LOCK PANEL
     if (action === "lock") {
-      const response = NextResponse.json({ ok: true });
-      response.cookies.set(COOKIE_NAME, "", {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
-        path: "/",
-        maxAge: 0,
+      const response = NextResponse.json({
+        ok: true,
+        message: "Panel berhasil dikunci.",
       });
-      return response;
+
+      return panelCookie(response, "", 0);
     }
 
+    const email = String(body.email || "").trim().toLowerCase();
+
+    if (!email) {
+      return NextResponse.json(
+        { error: "Email akun wajib diisi." },
+        { status: 400 }
+      );
+    }
+
+    // BAN / JAIL
     if (action === "ban" || action === "jail") {
+      const duration = String(body.duration || "").trim();
+
+      if (!duration) {
+        return NextResponse.json(
+          { error: "Durasi wajib diisi." },
+          { status: 400 }
+        );
+      }
+
       const result = await setAccountControl(
-        String(body.email || ""),
+        email,
         action,
-        String(body.duration || "")
+        duration
       );
 
-      return NextResponse.json({ ok: true, result });
+      return NextResponse.json({
+        ok: true,
+        result,
+      });
     }
 
+    // UNBAN / UNJAIL / MUTE / UNMUTE
     if (
       action === "unban" ||
       action === "unjail" ||
       action === "mute" ||
       action === "unmute"
     ) {
-      const result = await setAccountControl(
-        String(body.email || ""),
-        action
-      );
+      const result = await setAccountControl(email, action);
 
-      return NextResponse.json({ ok: true, result });
+      return NextResponse.json({
+        ok: true,
+        result,
+      });
     }
 
     return NextResponse.json(
@@ -86,17 +125,28 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   } catch (error: any) {
-    console.error("[BARA CONTROL API]", error);
+    console.error("[BARA CONTROL POST]", error);
+
+    const status =
+      error.message === "UNAUTHORIZED"
+        ? 401
+        : error.message === "PANEL_PIN_REQUIRED"
+          ? 401
+          : 500;
 
     return NextResponse.json(
       { error: error.message || "Control API error." },
-      { status: 500 }
+      { status }
     );
   }
 }
 
 export async function GET() {
   try {
+    // User harus login terlebih dahulu.
+    await requireUser();
+
+    // Lalu wajib membuka panel dengan PIN.
     if (!(await hasPanelSession())) {
       return NextResponse.json(
         { error: "Panel terkunci." },
@@ -119,7 +169,7 @@ export async function GET() {
 
     if (controlError) throw controlError;
 
-    const map = new Map(
+    const controlMap = new Map(
       (controls || []).map((item) => [
         item.email.toLowerCase(),
         item,
@@ -128,7 +178,7 @@ export async function GET() {
 
     const users = data.users.map((user) => {
       const email = (user.email || "").toLowerCase();
-      const control = map.get(email);
+      const control = controlMap.get(email);
 
       return {
         email: user.email,
@@ -146,9 +196,16 @@ export async function GET() {
   } catch (error: any) {
     console.error("[BARA CONTROL GET]", error);
 
+    const status =
+      error.message === "UNAUTHORIZED"
+        ? 401
+        : error.message === "PANEL_PIN_REQUIRED"
+          ? 401
+          : 500;
+
     return NextResponse.json(
       { error: error.message || "Gagal memuat daftar akun." },
-      { status: 500 }
+      { status }
     );
   }
 }
