@@ -12,47 +12,74 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-function parseControlCommand(command: string) {
+type ControlAction =
+  | "ban"
+  | "unban"
+  | "jail"
+  | "unjail"
+  | "mute"
+  | "unmute";
+
+type ControlCommand = {
+  action: ControlAction;
+  email: string;
+  duration?: string;
+};
+
+function parseControlCommand(
+  command: string
+): ControlCommand | null {
   const parts = command.trim().split(/\s+/);
+  const action = parts[0]?.toLowerCase();
 
-  if (!parts[0]?.startsWith("/")) return null;
-
-  const action = parts[0].slice(1).toLowerCase();
-
-  const allowed = [
-    "ban", "unban", "jail", "unjail", "mute", "unmute",
+  const allowed: ControlAction[] = [
+    "ban",
+    "unban",
+    "jail",
+    "unjail",
+    "mute",
+    "unmute",
   ];
 
-  if (!allowed.includes(action)) {
-    throw new Error("Perintah kontrol tidak dikenal.");
+  // Hanya perintah kontrol yang dikenal.
+  // Path Linux seperti /usr/bin/python3 bukan perintah kontrol.
+  if (!allowed.includes(action as ControlAction)) {
+    return null;
   }
 
   if (parts.length < 2) {
-    throw new Error(`Format: /${action} email@gmail.com`);
+    throw new Error(
+      `Format: /${action} email@gmail.com`
+    );
   }
 
   if (parts.length > 3) {
     throw new Error("Format perintah tidak valid.");
   }
 
-  if ((action === "ban" || action === "jail") && !parts[2]) {
+  const controlAction = action as ControlAction;
+  const email = parts[1];
+  const duration = parts[2];
+
+  if (
+    controlAction === "ban" ||
+    controlAction === "jail"
+  ) {
+    if (!duration) {
+      throw new Error(
+        `Format: /${controlAction} email@gmail.com 77day atau permanent`
+      );
+    }
+  } else if (duration) {
     throw new Error(
-      `Format: /${action} email@gmail.com 77day atau permanent`
+      `Format: /${controlAction} email@gmail.com`
     );
   }
 
-  if (
-    action !== "ban" &&
-    action !== "jail" &&
-    parts[2]
-  ) {
-    throw new Error(`Format: /${action} email@gmail.com`);
-  }
-
   return {
-    action,
-    email: parts[1],
-    duration: parts[2],
+    action: controlAction,
+    email,
+    duration,
   };
 }
 
@@ -60,6 +87,7 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const body = await req.json();
+
     const command = String(body.command || "").trim();
 
     if (!command) {
@@ -76,10 +104,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // Perintah kontrol akun
-    if (command.startsWith("/")) {
-      const control = parseControlCommand(command);
+    // Periksa apakah command merupakan perintah kontrol.
+    const control = parseControlCommand(command);
 
+    if (control !== null) {
+      // Panel JSON harus sudah dibuka menggunakan PIN.
       if (!(await hasPanelSession())) {
         throw new Error("PANEL_PIN_REQUIRED");
       }
@@ -101,7 +130,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // Pemeriksaan akun biasa
+    // Pemeriksaan akun biasa.
     await assertAccountAccess(user.email || "");
     await assertNotMuted(user.email || "");
 
@@ -109,7 +138,10 @@ export async function POST(req: Request) {
 
     const result = await sbx.runCommand({
       cmd: "bash",
-      args: ["-lc", "cd /vercel/sandbox && " + command],
+      args: [
+        "-lc",
+        "cd /vercel/sandbox && " + command,
+      ],
       timeoutMs: 50000,
     });
 
@@ -119,23 +151,37 @@ export async function POST(req: Request) {
       exitCode: result.exitCode,
     });
   } catch (e: any) {
+    console.error("[BARA TERMINAL]", e);
+
     const messages: Record<string, string> = {
       UNAUTHORIZED: "Silakan login dulu.",
       ACCOUNT_BANNED: "Akun terkena ban.",
       ACCOUNT_JAILED: "Akun sedang di-jail.",
-      ACCOUNT_MUTED: "Akun sedang di-mute. Command dinonaktifkan.",
-      PANEL_PIN_REQUIRED: "Masukkan PIN melalui tombol JSON dahulu.",
+      ACCOUNT_MUTED:
+        "Akun sedang di-mute. Command dinonaktifkan.",
+      PANEL_PIN_REQUIRED:
+        "Masukkan PIN melalui tombol JSON dahulu.",
     };
 
-    const message = messages[e.message] || e.message || "Terminal error.";
+    const message =
+      messages[e.message] ||
+      e.message ||
+      "Terminal error.";
 
     const status =
-      e.message === "UNAUTHORIZED" ? 401 :
-      e.message === "ACCOUNT_BANNED" ||
-      e.message === "ACCOUNT_JAILED" ||
-      e.message === "ACCOUNT_MUTED" ? 403 :
-      e.message === "PANEL_PIN_REQUIRED" ? 401 : 500;
+      e.message === "UNAUTHORIZED"
+        ? 401
+        : e.message === "ACCOUNT_BANNED" ||
+            e.message === "ACCOUNT_JAILED" ||
+            e.message === "ACCOUNT_MUTED"
+          ? 403
+          : e.message === "PANEL_PIN_REQUIRED"
+            ? 401
+            : 500;
 
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: message },
+      { status }
+    );
   }
 }
