@@ -26,13 +26,20 @@ export async function createClient() {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(items) {
+
+      setAll(
+        items: {
+          name: string;
+          value: string;
+          options?: any;
+        }[]
+      ) {
         try {
           items.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
           });
         } catch {
-          // Cookie tidak dapat ditulis dari Server Component.
+          // Server Component tidak bisa menulis cookie.
         }
       },
     },
@@ -56,7 +63,7 @@ export function adminClient() {
   });
 }
 
-// Deteksi admin tanpa bergantung pada environment variable tambahan
+// Deteksi akun admin
 export function isAdminEmail(email?: string | null) {
   return (
     typeof email === "string" &&
@@ -83,15 +90,14 @@ export async function requireUser() {
     throw new Error("GMAIL_REQUIRED");
   }
 
-  // ADMIN LANGSUNG MASUK.
-  // Tidak perlu pemeriksaan moderation untuk admin.
+  // Admin langsung mendapat akses penuh.
+  // Admin tidak perlu melewati pemeriksaan ban.
   if (isAdminEmail(email)) {
     return user;
   }
 
-  // USER BARU LANGSUNG AKTIF.
-  // Tidak ada pemeriksaan approval atau verifikasi moderator.
-  // Tabel ini hanya digunakan untuk memeriksa status ban/jail.
+  // Pengguna biasa langsung aktif jika belum pernah diban.
+  // Tidak ada pemeriksaan approval/verifikasi moderator.
   const admin = adminClient();
 
   const { data: moderation, error } = await admin
@@ -105,7 +111,7 @@ export async function requireUser() {
     throw new Error("BAN_DATABASE_ERROR");
   }
 
-  // Tidak ada catatan ban berarti akun aktif.
+  // Tidak ada catatan moderation berarti akun aktif.
   if (!moderation) {
     return user;
   }
@@ -135,7 +141,7 @@ export async function requireUser() {
     );
   }
 
-  // Hukuman sudah kedaluwarsa: aktifkan kembali akun.
+  // Hukuman sudah kedaluwarsa, aktifkan kembali akun.
   const { error: updateError } = await admin
     .from("account_moderation")
     .update({
