@@ -3,66 +3,60 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
-export async function createClient() {
-  const cookieStore = await cookies();
+function getSupabaseConfig() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Supabase URL atau Anon Key belum diatur.");
+  if (!url || !anonKey) {
+    throw new Error("SUPABASE_PUBLIC_CONFIG_MISSING");
   }
 
-  return createServerClient(
-    supabaseUrl,
-    supabaseAnonKey,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
+  return { url, anonKey };
+}
 
-        setAll(
-          items: {
-            name: string;
-            value: string;
-            options?: any;
-          }[]
-        ) {
-          try {
-            items.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // Cookie tidak bisa ditulis dari Server Component.
-            // Middleware dapat menangani refresh session.
-          }
-        },
+export async function createClient() {
+  const cookieStore = await cookies();
+  const { url, anonKey } = getSupabaseConfig();
+
+  return createServerClient(url, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
       },
-    }
-  );
+
+      setAll(
+        items: {
+          name: string;
+          value: string;
+          options?: any;
+        }[]
+      ) {
+        try {
+          for (const { name, value, options } of items) {
+            cookieStore.set(name, value, options);
+          }
+        } catch {
+          // Cookie tidak dapat ditulis dari Server Component.
+        }
+      },
+    },
+  });
 }
 
 export function adminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error(
-      "Supabase Service Role Key belum diatur."
-    );
+  if (!url || !serviceRoleKey) {
+    throw new Error("SUPABASE_SERVICE_ROLE_CONFIG_MISSING");
   }
 
-  return createAdminClient(
-    supabaseUrl,
-    serviceRoleKey,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  );
+  return createAdminClient(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
 export async function requireUser() {
@@ -70,10 +64,10 @@ export async function requireUser() {
 
   const {
     data: { user },
-    error,
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (error || !user) {
+  if (authError || !user) {
     throw new Error("UNAUTHORIZED");
   }
 
@@ -81,16 +75,32 @@ export async function requireUser() {
     throw new Error("GMAIL_REQUIRED");
   }
 
-  const admin = adminClient();
+  let admin;
 
-  const { data: moderation, error: moderationError } =
-    await admin
-      .from("account_moderation")
-      .select("status, reason, expires_at")
-      .eq("user_id", user.id)
-      .maybeSingle();
+  try {
+    admin = adminClient();
+  } catch (error) {
+    console.error("[BARA ADMIN CLIENT ERROR]", error);
+    throw new Error("SUPABASE_SERVICE_ROLE_CONFIG_MISSING");
+  }
+
+  const {
+    data: moderation,
+    error: moderationError,
+  } = await admin
+    .from("account_moderation")
+    .select("status, reason, expires_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
   if (moderationError) {
+    console.error("[BARA MODERATION ERROR]", {
+      code: moderationError.code,
+      message: moderationError.message,
+      details: moderationError.details,
+      hint: moderationError.hint,
+    });
+
     throw new Error("MODERATION_CHECK_FAILED");
   }
 
@@ -98,17 +108,33 @@ export async function requireUser() {
     moderation?.status === "banned" ||
     moderation?.status === "jailed"
   ) {
-    const expires = moderation.expires_at
+    const expiresAt = moderation.expires_at
       ? new Date(moderation.expires_at).getTime()
       : null;
 
-    if (!expires || expires > Date.now()) {
+    const isActive =
+      expiresAt === null ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt > Date.now();
+
+    if (isActive) {
       throw new Error(
         moderation.status === "banned"
           ? "ACCOUNT_BANNED"
           : "ACCOUNT_JAILED"
       );
     }
+
+    // Status sudah kedaluwarsa, otomatis dianggap aktif.
+    await admin
+      .from("account_moderation")
+      .update({
+        status: "active",
+        reason: null,
+        expires_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", user.id);
   }
 
   return user;
@@ -120,6 +146,6 @@ export function isAdminEmail(email?: string | null) {
   return Boolean(
     email &&
     adminEmail &&
-    email.toLowerCase() === adminEmail.toLowerCase()
+    email.trim().toLowerCase() === adminEmail.trim().toLowerCase()
   );
 }
