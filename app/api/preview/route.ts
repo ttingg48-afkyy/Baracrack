@@ -19,7 +19,6 @@ const WEB_PORTS = [
 export async function GET() {
   try {
     const user = await requireUser();
-
     await assertAccountAccess(user.id);
     await assertNotMuted(user.id);
 
@@ -33,12 +32,11 @@ export async function GET() {
 
     if (result.exitCode !== 0) {
       throw new Error(
-        (await result.stderr()) || "Gagal mendeteksi port."
+        (await result.stderr()) || "Port detection failed."
       );
     }
 
     const output = await result.stdout();
-
     const detected = new Set<number>();
 
     for (const line of output.split("\n")) {
@@ -59,29 +57,26 @@ export async function GET() {
       await sbx.update({ ports });
     }
 
-    const preview = ports.map((port) => ({
-      port,
-      url: sbx.domain(port),
-    }));
-
-    return NextResponse.json(
-      { ports: preview },
-      { headers: { "Cache-Control": "no-store" } }
-    );
+    return NextResponse.json({
+      ports: ports.map((port) => ({
+        port,
+        url: sbx.domain(port),
+      })),
+    }, {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (error: any) {
     const message = error?.message || "Preview error.";
-
-    const status =
-      message.includes("UNAUTHORIZED") ? 401 :
-      message.includes("ACCOUNT_BANNED") ||
-      message.includes("ACCOUNT_JAILED") ||
-      message.includes("Akses ditolak") ? 403 : 500;
 
     return NextResponse.json(
       { error: message, ports: [] },
       {
-        status,
-        headers: { "Cache-Control": "no-store" },
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store",
+        },
       }
     );
   }
