@@ -1,3 +1,4 @@
+
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase";
 import { userSandbox, safePath } from "@/lib/sandbox";
@@ -8,6 +9,12 @@ export const maxDuration = 60;
 
 function quote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+const WORKSPACE = "/home/barateriminal";
+
+function isWorkspaceRoot(path: string) {
+  return path.replace(/\/+$/, "") === WORKSPACE;
 }
 
 function errorStatus(error: any) {
@@ -23,10 +30,13 @@ function errorStatus(error: any) {
   return 500;
 }
 
+function jsonError(message: string, status = 400) {
+  return NextResponse.json({ error: message }, { status });
+}
+
 export async function GET(req: Request) {
   try {
     const user = await requireUser();
-
     await assertAccountAccess(user.email || "");
 
     const url = new URL(req.url);
@@ -48,10 +58,7 @@ export async function GET(req: Request) {
       });
 
       if (result.exitCode !== 0) {
-        return NextResponse.json(
-          { error: "File tidak ditemukan." },
-          { status: 404 }
-        );
+        return jsonError("File tidak ditemukan.", 404);
       }
 
       const buffer = Buffer.from(
@@ -81,16 +88,26 @@ export async function GET(req: Request) {
       });
     }
 
+    if (action !== "list") {
+      return jsonError("Action GET tidak dikenal.");
+    }
+
     const result = await sbx.runCommand({
       cmd: "bash",
       args: [
         "-lc",
-        "find " +
+        "test -d " +
+          quote(target) +
+          " && find " +
           quote(target) +
           " -maxdepth 1 -mindepth 1 -printf '%y\\t%f\\n' | sort",
       ],
       timeoutMs: 20000,
     });
+
+    if (result.exitCode !== 0) {
+      return jsonError("Folder tidak ditemukan atau tidak bisa dibaca.", 404);
+    }
 
     const entries = (await result.stdout())
       .split("\n")
@@ -121,7 +138,6 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-
     await assertAccountAccess(user.email || "");
 
     const body = await req.json();
@@ -133,30 +149,46 @@ export async function POST(req: Request) {
       const result = await sbx.runCommand({
         cmd: "mkdir",
         args: ["-p", target],
+        timeoutMs: 20000,
       });
 
+      if (result.exitCode !== 0) {
+        return jsonError(
+          (await result.stderr()) || "Gagal membuat folder.",
+          500
+        );
+      }
+
       return NextResponse.json({
-        ok: result.exitCode === 0,
-        exitCode: result.exitCode,
+        ok: true,
+        path: target,
       });
     }
 
     if (action === "delete") {
-      if (target === "/vercel/sandbox") {
-        return NextResponse.json(
-          { error: "Tidak boleh menghapus root workspace." },
-          { status: 400 }
+      if (isWorkspaceRoot(target)) {
+        return jsonError(
+          "Tidak boleh menghapus root workspace.",
+          400
         );
       }
 
       const result = await sbx.runCommand({
         cmd: "rm",
         args: ["-rf", "--", target],
+        timeoutMs: 20000,
       });
 
+      if (result.exitCode !== 0) {
+        return jsonError(
+          (await result.stderr()) || "Gagal menghapus file.",
+          500
+        );
+      }
+
       return NextResponse.json({
-        ok: result.exitCode === 0,
-        exitCode: result.exitCode,
+        ok: true,
+        path: target,
       });
     }
 
@@ -164,13 +196,17 @@ export async function POST(req: Request) {
       const result = await sbx.runCommand({
         cmd: "cat",
         args: [target],
+        timeoutMs: 20000,
       });
 
-      return NextResponse.json({
-        content: await result.stdout(),
-        stderr: await result.stderr(),
-        exitCode: result.exitCode,
-      });
+      return NextResponse.json(
+        {
+          content: await result.stdout(),
+          stderr: await result.stderr(),
+          exitCode: result.exitCode,
+        },
+        { status: result.exitCode === 0 ? 200 : 404 }
+      );
     }
 
     if (action === "write") {
@@ -186,7 +222,7 @@ export async function POST(req: Request) {
 
       const command =
         "mkdir -p " +
-        quote(parent || ".") +
+        quote(parent || WORKSPACE) +
         " && printf '%s' " +
         quote(encoded) +
         " | base64 -d > " +
@@ -198,21 +234,20 @@ export async function POST(req: Request) {
         timeoutMs: 20000,
       });
 
-      return NextResponse.json(
-        {
-          ok: result.exitCode === 0,
-          stderr: await result.stderr(),
-        },
-        {
-          status: result.exitCode === 0 ? 200 : 500,
-        }
-      );
+      if (result.exitCode !== 0) {
+        return jsonError(
+          (await result.stderr()) || "Gagal menyimpan file.",
+          500
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        path: target,
+      });
     }
 
-    return NextResponse.json(
-      { error: "Action tidak dikenal." },
-      { status: 400 }
-    );
+    return jsonError("Action tidak dikenal.");
   } catch (error: any) {
     console.error("[BARA FILE POST]", error);
 
