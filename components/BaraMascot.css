@@ -1,0 +1,159 @@
+
+.bara-mascot {
+  position: relative;
+  width: 210px;
+  height: 245px;
+  margin: auto;
+  isolation: isolate;
+  overflow: visible;
+}
+
+/* SEMUA BAGIAN */
+.bara-part {
+  position: absolute;
+  display: block;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* BADAN */
+.bara-badan {
+  width: 55%;
+  height: 43%;
+  left: 22.5%;
+  top: 37%;
+  z-index: 2;
+  transform-origin: 50% 20%;
+  animation: bara-body 1.4s ease-in-out infinite;
+}
+
+/* KEPALA */
+.bara-kepala {
+  width: 58%;
+  height: 37%;
+  left: 21%;
+  top: 3%;
+  z-index: 5;
+  transform-origin: 50% 85%;
+  animation: bara-head 2s ease-in-out infinite;
+}
+
+/* TANGAN KIRI */
+.bara-tangankiri {
+  width: 39%;
+  height: 38%;
+  left: 0;
+  top: 38%;
+  z-index: 4;
+  transform-origin: 85% 15%;
+  animation: bara-wave 1s ease-in-out infinite;
+}
+
+/* TANGAN KANAN */
+.bara-tangankanan {
+  width: 39%;
+  height: 38%;
+  right: 0;
+  top: 38%;
+  z-index: 4;
+  transform-origin: 15% 15%;
+  animation: bara-mock 1.3s ease-in-out infinite;
+}
+
+/* KAKI KIRI */
+.bara-kakikiri {
+  width: 28%;
+  height: 29%;
+  left: 23%;
+  bottom: 0;
+  z-index: 1;
+  transform-origin: 75% 10%;
+  animation: bara-left-leg 1s ease-in-out infinite;
+}
+
+/* KAKI KANAN */
+.bara-kakikanan {
+  width: 28%;
+  height: 29%;
+  right: 23%;
+  bottom: 0;
+  z-index: 1;
+  transform-origin: 25% 10%;
+  animation: bara-right-leg 1s ease-in-out infinite;
+}
+
+/* ANIMASI KEPALA */
+@keyframes bara-head {
+  0%, 100% {
+    transform: rotate(-4deg) translateY(0);
+  }
+  50% {
+    transform: rotate(5deg) translateY(-5px);
+  }
+}
+
+/* BADAN BERGERAK */
+@keyframes bara-body {
+  0%, 100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-3px) rotate(1deg);
+  }
+}
+
+/* TANGAN KIRI MELAMBAI */
+@keyframes bara-wave {
+  0%, 100% {
+    transform: rotate(-12deg);
+  }
+  50% {
+    transform: rotate(25deg);
+  }
+}
+
+/* TANGAN KANAN MENGEJEK */
+@keyframes bara-mock {
+  0%, 100% {
+    transform: rotate(8deg) translateY(0);
+  }
+  50% {
+    transform: rotate(-13deg) translateY(-7px);
+  }
+}
+
+/* KAKI KIRI */
+@keyframes bara-left-leg {
+  0%, 100% {
+    transform: rotate(-5deg) translateY(0);
+  }
+  50% {
+    transform: rotate(8deg) translateY(3px);
+  }
+}
+
+/* KAKI KANAN */
+@keyframes bara-right-leg {
+  0%, 100% {
+    transform: rotate(5deg) translateY(3px);
+  }
+  50% {
+    transform: rotate(-8deg) translateY(0);
+  }
+}
+
+/* RESPONSIVE */
+@media (max-width: 480px) {
+  .bara-mascot {
+    width: 165px;
+    height: 195px;
+  }
+}
+
+/* AKSESIBILITAS */
+@media (prefers-reduced-motion: reduce) {
+  .bara-part {
+    animation: none !important;
+  }
+  }
