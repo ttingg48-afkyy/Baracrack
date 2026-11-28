@@ -8,6 +8,10 @@ import {
   hasPanelSession,
   setAccountControl,
 } from "@/lib/control";
+import {
+  enableMaintenance,
+  disableMaintenance,
+} from "@/lib/maintenance";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,7 +30,9 @@ type ControlCommand = {
   duration?: string;
 };
 
-function parseControlCommand(command: string): ControlCommand | null {
+function parseControlCommand(
+  command: string
+): ControlCommand | null {
   const parts = command.trim().split(/\s+/);
 
   const match = parts[0]?.match(
@@ -39,62 +45,192 @@ function parseControlCommand(command: string): ControlCommand | null {
 
   if (parts.length < 2 || parts.length > 3) {
     throw new Error(
-      `Format: /${action} email@gmail.com${action === "ban" || action === "jail" ? " 77h atau permanent" : ""}`
+      "Format: /ban email@gmail.com 1h atau /unban email@gmail.com"
     );
   }
 
-  const email = parts[1].trim().toLowerCase();
-  const duration = parts[2];
+  const email = parts[1].toLowerCase();
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new Error("Format email tidak valid.");
   }
 
-  if (
-    (action === "ban" || action === "jail") &&
-    !duration
-  ) {
+  const needsDuration =
+    action === "ban" || action === "jail";
+
+  if (needsDuration && parts.length !== 3) {
     throw new Error(
-      `Format: /${action} email@gmail.com 77h atau permanent`
+      `Durasi wajib diisi. Contoh: /${action} ${email} 1h`
     );
   }
 
+  if (!needsDuration && parts.length !== 2) {
+    throw new Error(
+      `Command /${action} tidak membutuhkan durasi.`
+    );
+  }
+
+  const duration = parts[2];
+
   if (
-    !["ban", "jail"].includes(action) &&
-    duration
+    duration &&
+    !/^([1-9]\d*)([hd])$/i.test(duration)
   ) {
-    throw new Error(`Format: /${action} email@gmail.com`);
+    throw new Error(
+      "Format durasi harus menggunakan h atau d. Contoh: 1h atau 7d."
+    );
   }
 
   return { action, email, duration };
 }
 
+function parseMaintenanceCommand(command: string) {
+  const match = command.match(
+    /^\/maintance\s+(.+?)\s+([1-9]\d*[hd])$/i
+  );
+
+  if (!match) {
+    throw new Error(
+      "Format: /maintance PESAN 1h atau /maintance PESAN 2d"
+    );
+  }
+
+  const message = match[1].trim();
+  const duration = match[2].toLowerCase();
+
+  if (!message) {
+    throw new Error("Pesan maintenance tidak boleh kosong.");
+  }
+
+  if (message.length > 500) {
+    throw new Error("Pesan maksimal 500 karakter.");
+  }
+
+  const durationMatch = duration.match(/^([1-9]\d*)([hd])$/i);
+
+  if (!durationMatch) {
+    throw new Error("Durasi tidak valid.");
+  }
+
+  const amount = Number(durationMatch[1]);
+  const unit = durationMatch[2].toLowerCase();
+
+  const hours = unit === "h" ? amount : amount * 24;
+
+  if (hours > 365 * 24) {
+    throw new Error("Durasi maksimal 365 hari.");
+  }
+
+  return { message, duration };
+}
+
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-    const body = await req.json();
 
+    const body = await req.json();
     const command = String(body.command || "").trim();
 
     if (!command) {
       return NextResponse.json(
-        { error: "Command kosong." },
+        {
+          stdout: "",
+          stderr: "Command tidak boleh kosong.",
+          exitCode: 1,
+        },
         { status: 400 }
       );
     }
 
     if (command.length > 4000) {
       return NextResponse.json(
-        { error: "Command terlalu panjang." },
-        { status: 413 }
+        {
+          stdout: "",
+          stderr: "Command terlalu panjang. Maksimal 4000 karakter.",
+          exitCode: 1,
+        },
+        { status: 400 }
       );
     }
 
+    // =====================================
+    // GLOBAL MAINTENANCE ON
+    // =====================================
+    if (/^\/maintance(?:\s|$)/i.test(command)) {
+      const allowed = await hasPanelSession();
+
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            stdout: "",
+            stderr: "Akses ditolak. Admin panel session diperlukan.",
+            exitCode: 1,
+          },
+          { status: 403 }
+        );
+      }
+
+      const { message, duration } =
+        parseMaintenanceCommand(command);
+
+      await enableMaintenance(message, duration);
+
+      return NextResponse.json({
+        stdout:
+          "GLOBAL MAINTENANCE BERHASIL DIAKTIFKAN\n" +
+          `Pesan: ${message}\n` +
+          `Durasi: ${duration}\n` +
+          "Website sekarang menampilkan halaman maintenance.",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    // =====================================
+    // GLOBAL MAINTENANCE OFF
+    // =====================================
+    if (/^\/unmaintance$/i.test(command)) {
+      const allowed = await hasPanelSession();
+
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            stdout: "",
+            stderr: "Akses ditolak. Admin panel session diperlukan.",
+            exitCode: 1,
+          },
+          { status: 403 }
+        );
+      }
+
+      await disableMaintenance();
+
+      return NextResponse.json({
+        stdout:
+          "GLOBAL MAINTENANCE BERHASIL DINONAKTIFKAN\n" +
+          "Website kembali normal.",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    // =====================================
+    // ACCOUNT MODERATION COMMANDS
+    // =====================================
     const control = parseControlCommand(command);
 
-    if (control) {
-      if (!(await hasPanelSession())) {
-        throw new Error("PANEL_PIN_REQUIRED");
+    if (control !== null) {
+      const allowed = await hasPanelSession();
+
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            stdout: "",
+            stderr: "Akses ditolak. Admin panel session diperlukan.",
+            exitCode: 1,
+          },
+          { status: 403 }
+        );
       }
 
       const result = await setAccountControl(
@@ -105,17 +241,22 @@ export async function POST(req: Request) {
 
       return NextResponse.json({
         stdout:
-          `${control.action.toUpperCase()} berhasil: ${result.email}\n` +
+          `ACCOUNT CONTROL SUCCESS\n` +
+          `Email: ${result.email}\n` +
+          `Action: ${control.action}\n` +
           `Status: ${result.status}\n` +
           `Muted: ${result.muted}\n` +
-          `Expires: ${result.expires_at || "PERMANENT / NONE"}\n`,
+          `Expires: ${result.expires_at || "Never"}`,
         stderr: "",
         exitCode: 0,
       });
     }
 
-    await assertAccountAccess(user.email || "");
-    await assertNotMuted(user.email || "");
+    // =====================================
+    // NORMAL LINUX TERMINAL
+    // =====================================
+    await assertAccountAccess(user.id);
+    await assertNotMuted(user.id);
 
     const sbx = await userSandbox(user.id);
 
@@ -123,47 +264,36 @@ export async function POST(req: Request) {
       cmd: "bash",
       args: [
         "-lc",
-        `cd /home/barateriminal && ${command}`,
+        "cd /vercel/sandbox && " + command,
       ],
-      timeoutMs: 50000,
+      timeoutMs: 50_000,
     });
 
     return NextResponse.json({
-      stdout: await result.stdout(),
-      stderr: await result.stderr(),
-      exitCode: result.exitCode,
+      stdout: result.stdout || "",
+      stderr: result.stderr || "",
+      exitCode: result.exitCode ?? 0,
     });
   } catch (error: any) {
-    console.error("[BARA TERMINAL]", error);
-
-    const messages: Record<string, string> = {
-      UNAUTHORIZED: "Silakan login terlebih dahulu.",
-      ACCOUNT_BANNED: "Akun ini terkena ban.",
-      ACCOUNT_JAILED: "Akun ini sedang di-jail.",
-      ACCOUNT_MUTED: "Akun ini sedang di-mute.",
-      PANEL_PIN_REQUIRED:
-        "Buka panel JSON dan masukkan PIN terlebih dahulu.",
-    };
-
     const message =
-      messages[error?.message] ||
-      error?.message ||
-      "Terjadi kesalahan pada terminal.";
+      error?.message || "Terjadi kesalahan pada terminal.";
 
-    let status = 500;
+    const status =
+      message.includes("UNAUTHORIZED") ||
+      message.toLowerCase().includes("login")
+        ? 401
+        : message.includes("ACCOUNT_BANNED")
+          ? 403
+          : 500;
 
-    if (error?.message === "UNAUTHORIZED") status = 401;
-
-    if (
-      ["ACCOUNT_BANNED", "ACCOUNT_JAILED", "ACCOUNT_MUTED"].includes(
-        error?.message
-      )
-    ) {
-      status = 403;
-    }
-
-    if (error?.message === "PANEL_PIN_REQUIRED") status = 401;
-
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      {
+        stdout: "",
+        stderr: message,
+        exitCode: 1,
+      },
+      { status }
+    );
   }
 }
+  
