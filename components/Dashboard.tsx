@@ -19,6 +19,11 @@ type DashboardProps = {
   maintenance: MaintenanceState;
 };
 
+type PreviewPort = {
+  port: number;
+  url: string;
+};
+
 export default function Dashboard({ maintenance }: DashboardProps) {
   const [supabase] = useState(() =>
     createBrowserClient(
@@ -49,12 +54,15 @@ export default function Dashboard({ maintenance }: DashboardProps) {
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
 
-  // MAINTENANCE LIVE STATE
   const [maintenanceState, setMaintenanceState] =
     useState<MaintenanceState>(maintenance);
 
-  // TERMINAL CURRENT DIRECTORY
   const [cwd, setCwd] = useState("/home/barateriminal");
+
+  // WEB PREVIEW
+  const [previewPorts, setPreviewPorts] = useState<PreviewPort[]>([]);
+  const [previewChecking, setPreviewChecking] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   // API HELPER
   const api = useCallback(
@@ -87,10 +95,66 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     []
   );
 
-  // =====================================
-  // AUTH SESSION
-  // =====================================
+  // REFRESH WEB PREVIEW
+  const refreshPreview = useCallback(async () => {
+    setPreviewChecking(true);
 
+    try {
+      const data = await api("/api/preview");
+
+      setPreviewPorts(
+        Array.isArray(data.ports) ? data.ports : []
+      );
+
+      setPreviewError("");
+    } catch (error: any) {
+      setPreviewError(
+        error.message || "Gagal memeriksa port."
+      );
+    } finally {
+      setPreviewChecking(false);
+    }
+  }, [api]);
+
+  // AUTO DETECT PORT EVERY 5 SECONDS
+  useEffect(() => {
+    if (!user || tab !== "terminal") return;
+
+    let active = true;
+
+    async function checkPorts() {
+      try {
+        const data = await api("/api/preview");
+
+        if (active) {
+          setPreviewPorts(
+            Array.isArray(data.ports) ? data.ports : []
+          );
+          setPreviewError("");
+        }
+      } catch (error: any) {
+        if (active) {
+          setPreviewError(
+            error.message || "Gagal memeriksa port."
+          );
+        }
+      }
+    }
+
+    void checkPorts();
+
+    const timer = window.setInterval(
+      checkPorts,
+      5000
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user, tab, api]);
+
+  // AUTH SESSION
   useEffect(() => {
     let active = true;
 
@@ -124,10 +188,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     };
   }, [supabase]);
 
-  // =====================================
   // LIVE MAINTENANCE CHECK
-  // =====================================
-
   useEffect(() => {
     let active = true;
 
@@ -167,10 +228,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     };
   }, []);
 
-  // =====================================
   // AUTH MODE
-  // =====================================
-
   function switchMode(next: "login" | "signup") {
     setMode(next);
     setCodeSent(false);
@@ -178,10 +236,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     setMessage("");
   }
 
-  // =====================================
   // REGISTER / SEND OTP
-  // =====================================
-
   async function sendCode() {
     if (busy) return;
 
@@ -227,10 +282,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // VERIFY OTP
-  // =====================================
-
   async function verifyCode() {
     if (busy) return;
 
@@ -280,10 +332,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // LOGIN
-  // =====================================
-
   async function login() {
     if (busy) return;
 
@@ -332,10 +381,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // LOGOUT
-  // =====================================
-
   async function logout() {
     if (busy) return;
 
@@ -372,6 +418,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       setContent("");
       setMessage("");
       setCwd("/home/barateriminal");
+      setPreviewPorts([]);
     } catch (error: any) {
       setMessage(error.message || "Logout gagal.");
     } finally {
@@ -379,10 +426,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // TERMINAL
-  // =====================================
-
   async function run(cmd = command) {
     const selected = cmd.trim();
 
@@ -429,6 +473,11 @@ export default function Dashboard({ maintenance }: DashboardProps) {
         `\n[exit ${data.exitCode ?? "unknown"}]\n`;
 
       setOutput((previous) => previous + result);
+
+      // Refresh preview after running a command.
+      window.setTimeout(() => {
+        void refreshPreview();
+      }, 1000);
     } catch (error: any) {
       setOutput(
         (previous) =>
@@ -481,10 +530,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     URL.revokeObjectURL(url);
   }
 
-  // =====================================
   // OPEN EDITOR
-  // =====================================
-
   async function openFileFromPath(target: string) {
     if (busy) return;
 
@@ -521,10 +567,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // SAVE EDITOR
-  // =====================================
-
   async function saveFile() {
     if (!file || busy) return;
 
@@ -551,10 +594,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
-  // =====================================
   // GLOBAL MAINTENANCE SCREEN
-  // =====================================
-
   if (maintenanceState.enabled) {
     const expiryText = maintenanceState.expires_at
       ? new Date(
@@ -707,10 +747,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     );
   }
 
-  // =====================================
   // LOADING
-  // =====================================
-
   if (loading) {
     return (
       <main className="auth">
@@ -723,10 +760,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     );
   }
 
-  // =====================================
   // AUTH SCREEN
-  // =====================================
-
   if (!user) {
     return (
       <main className="auth">
@@ -901,10 +935,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     );
   }
 
-  // =====================================
   // DASHBOARD
-  // =====================================
-
   return (
     <main className="shell">
       <header>
@@ -996,6 +1027,146 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           >
             {cwd}
           </small>
+
+          {/* WEB PREVIEW PANEL */}
+          <div
+            style={{
+              background: "#101820",
+              border: "1px solid #293746",
+              borderRadius: 12,
+              padding: 14,
+              marginBottom: 14,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <strong style={{ color: "#e5edf5" }}>
+                  WEB PREVIEW
+                </strong>
+
+                <div
+                  style={{
+                    color: "#8c9baa",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
+                  AUTO PORT DETECTION
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="amber"
+                onClick={() => void refreshPreview()}
+                disabled={previewChecking}
+              >
+                {previewChecking
+                  ? "CHECKING..."
+                  : "REFRESH PORTS"}
+              </button>
+            </div>
+
+            {previewError && (
+              <p
+                style={{
+                  color: "#ff7777",
+                  fontSize: 12,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {previewError}
+              </p>
+            )}
+
+            {previewPorts.length === 0 ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  background: "#17232e",
+                  borderRadius: 8,
+                  color: "#9daaba",
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                }}
+              >
+                <strong style={{ color: "#dce5ee" }}>
+                  NO ACTIVE WEB SERVER
+                </strong>
+
+                <p style={{ margin: "6px 0 0" }}>
+                  Jalankan server web di terminal dengan host
+                  0.0.0.0. Port yang didukung akan muncul otomatis
+                  di sini.
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: 9,
+                  marginTop: 12,
+                }}
+              >
+                {previewPorts.map((item) => (
+                  <div
+                    key={item.port}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      padding: 10,
+                      borderRadius: 8,
+                      background: "#17232e",
+                    }}
+                  >
+                    <div>
+                      <strong
+                        style={{ color: "#a7f3d0" }}
+                      >
+                        PORT {item.port}
+                      </strong>
+
+                      <div
+                        style={{
+                          color: "#8192a3",
+                          fontSize: 11,
+                          marginTop: 4,
+                        }}
+                      >
+                        SERVER DETECTED
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="lime"
+                      onClick={() =>
+                        window.open(
+                          item.url,
+                          "_blank",
+                          "noopener,noreferrer"
+                        )
+                      }
+                    >
+                      OPEN WEB PREVIEW ↗
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <pre className="console">{output}</pre>
 
