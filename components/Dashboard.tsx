@@ -8,7 +8,16 @@ import UpdateManager from "@/components/UpdateManager";
 
 type Tab = "terminal" | "files" | "editor";
 
-export default function Dashboard() {
+type DashboardProps = {
+  maintenance: {
+    enabled: boolean;
+    message: string;
+    duration_label: string | null;
+    expires_at: string | null;
+  };
+};
+
+export default function Dashboard({ maintenance }: DashboardProps) {
   const [supabase] = useState(() =>
     createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -405,6 +414,155 @@ export default function Dashboard() {
     } finally {
       setBusy(false);
     }
+  }
+
+  // GLOBAL MAINTENANCE SCREEN
+  if (maintenance.enabled) {
+    const expiryText = maintenance.expires_at
+      ? new Date(maintenance.expires_at).toLocaleString("id-ID", {
+          dateStyle: "long",
+          timeStyle: "medium",
+          timeZone: "Asia/Jakarta",
+        })
+      : "Tidak ditentukan";
+
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          background: "#080b10",
+          color: "#f3f4f6",
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
+        <section
+          style={{
+            width: "100%",
+            maxWidth: 560,
+            padding: "38px 26px",
+            border: "1px solid #303946",
+            borderRadius: 18,
+            background: "#111820",
+            textAlign: "center",
+            boxShadow: "0 20px 70px #0008",
+          }}
+        >
+          <div
+            style={{
+              width: 68,
+              height: 68,
+              margin: "0 auto 22px",
+              display: "grid",
+              placeItems: "center",
+              borderRadius: "50%",
+              background: "#302719",
+              color: "#ffbd55",
+              fontSize: 30,
+            }}
+          >
+            ⚙
+          </div>
+
+          <small
+            style={{
+              color: "#a3adba",
+              letterSpacing: 3,
+              fontSize: 11,
+            }}
+          >
+            BARA TERMINAL / SYSTEM NOTICE
+          </small>
+
+          <h1
+            style={{
+              margin: "18px 0",
+              fontSize: 30,
+              letterSpacing: 1,
+            }}
+          >
+            WEBSITE MAINTENANCE
+          </h1>
+
+          <p
+            style={{
+              color: "#c7d0da",
+              fontSize: 16,
+              lineHeight: 1.8,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {maintenance.message}
+          </p>
+
+          <div
+            style={{
+              marginTop: 28,
+              padding: 20,
+              borderRadius: 12,
+              background: "#1a2430",
+              border: "1px solid #354252",
+            }}
+          >
+            <small style={{ color: "#9daaba" }}>
+              ESTIMATED MAINTENANCE DURATION
+            </small>
+
+            <div
+              style={{
+                marginTop: 8,
+                color: "#ffbd55",
+                fontSize: 34,
+                fontWeight: 800,
+              }}
+            >
+              {maintenance.duration_label || "ACTIVE"}
+            </div>
+          </div>
+
+          <p
+            style={{
+              marginTop: 22,
+              color: "#9daaba",
+              fontSize: 13,
+              lineHeight: 1.7,
+            }}
+          >
+            Website sedang dalam pemeliharaan.
+            <br />
+            Silakan kembali setelah waktu maintenance berakhir.
+          </p>
+
+          <div
+            style={{
+              marginTop: 22,
+              paddingTop: 18,
+              borderTop: "1px solid #303946",
+              color: "#7f8b99",
+              fontSize: 12,
+            }}
+          >
+            ESTIMATED END
+            <br />
+            <b style={{ color: "#c7d0da" }}>{expiryText}</b>
+          </div>
+
+          <div
+            style={{
+              marginTop: 26,
+              color: "#657383",
+              fontSize: 11,
+              letterSpacing: 2,
+            }}
+          >
+            BARA TERMINAL · SYSTEM MAINTENANCE
+          </div>
+        </section>
+      </main>
+    );
   }
 
   // LOADING
