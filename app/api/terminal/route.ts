@@ -30,22 +30,16 @@ function parseControlCommand(
   command: string
 ): ControlCommand | null {
   const parts = command.trim().split(/\s+/);
-  const action = parts[0]?.toLowerCase();
 
-  const allowed: ControlAction[] = [
-    "ban",
-    "unban",
-    "jail",
-    "unjail",
-    "mute",
-    "unmute",
-  ];
+  // Perintah harus diawali slash, misalnya /ban.
+  const match = parts[0]?.match(
+    /^\/(ban|unban|jail|unjail|mute|unmute)$/i
+  );
 
-  // Hanya perintah kontrol yang dikenal.
-  // Path Linux seperti /usr/bin/python3 bukan perintah kontrol.
-  if (!allowed.includes(action as ControlAction)) {
-    return null;
-  }
+  // Perintah Linux biasa diteruskan ke Bash.
+  if (!match) return null;
+
+  const action = match[1].toLowerCase() as ControlAction;
 
   if (parts.length < 2) {
     throw new Error(
@@ -57,27 +51,27 @@ function parseControlCommand(
     throw new Error("Format perintah tidak valid.");
   }
 
-  const controlAction = action as ControlAction;
-  const email = parts[1];
+  const email = parts[1].trim().toLowerCase();
   const duration = parts[2];
 
-  if (
-    controlAction === "ban" ||
-    controlAction === "jail"
-  ) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("Format email tidak valid.");
+  }
+
+  if (action === "ban" || action === "jail") {
     if (!duration) {
       throw new Error(
-        `Format: /${controlAction} email@gmail.com 77day atau permanent`
+        `Format: /${action} email@gmail.com 77h atau permanent`
       );
     }
   } else if (duration) {
     throw new Error(
-      `Format: /${controlAction} email@gmail.com`
+      `Format: /${action} email@gmail.com`
     );
   }
 
   return {
-    action: controlAction,
+    action,
     email,
     duration,
   };
@@ -104,11 +98,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // Periksa apakah command merupakan perintah kontrol.
+    // Periksa perintah admin sebelum menjalankan Bash.
     const control = parseControlCommand(command);
 
     if (control !== null) {
-      // Panel JSON harus sudah dibuka menggunakan PIN.
       if (!(await hasPanelSession())) {
         throw new Error("PANEL_PIN_REQUIRED");
       }
@@ -130,7 +123,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // Pemeriksaan akun biasa.
+    // Pemeriksaan akun pengguna biasa.
     await assertAccountAccess(user.email || "");
     await assertNotMuted(user.email || "");
 
@@ -150,34 +143,36 @@ export async function POST(req: Request) {
       stderr: await result.stderr(),
       exitCode: result.exitCode,
     });
-  } catch (e: any) {
-    console.error("[BARA TERMINAL]", e);
+  } catch (error: any) {
+    console.error("[BARA TERMINAL]", error);
 
     const messages: Record<string, string> = {
-      UNAUTHORIZED: "Silakan login dulu.",
-      ACCOUNT_BANNED: "Akun terkena ban.",
-      ACCOUNT_JAILED: "Akun sedang di-jail.",
-      ACCOUNT_MUTED:
-        "Akun sedang di-mute. Command dinonaktifkan.",
+      UNAUTHORIZED: "Silakan login terlebih dahulu.",
+      ACCOUNT_BANNED: "Akun ini terkena ban.",
+      ACCOUNT_JAILED: "Akun ini sedang di-jail.",
+      ACCOUNT_MUTED: "Akun ini sedang di-mute.",
       PANEL_PIN_REQUIRED:
-        "Masukkan PIN melalui tombol JSON dahulu.",
+        "Buka panel JSON dan masukkan PIN terlebih dahulu.",
     };
 
     const message =
-      messages[e.message] ||
-      e.message ||
-      "Terminal error.";
+      messages[error?.message] ||
+      error?.message ||
+      "Terjadi kesalahan pada terminal.";
 
-    const status =
-      e.message === "UNAUTHORIZED"
-        ? 401
-        : e.message === "ACCOUNT_BANNED" ||
-            e.message === "ACCOUNT_JAILED" ||
-            e.message === "ACCOUNT_MUTED"
-          ? 403
-          : e.message === "PANEL_PIN_REQUIRED"
-            ? 401
-            : 500;
+    let status = 500;
+
+    if (error?.message === "UNAUTHORIZED") {
+      status = 401;
+    } else if (
+      error?.message === "ACCOUNT_BANNED" ||
+      error?.message === "ACCOUNT_JAILED" ||
+      error?.message === "ACCOUNT_MUTED"
+    ) {
+      status = 403;
+    } else if (error?.message === "PANEL_PIN_REQUIRED") {
+      status = 401;
+    }
 
     return NextResponse.json(
       { error: message },
