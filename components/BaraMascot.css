@@ -16,125 +16,89 @@
   object-position: center;
   pointer-events: none;
   user-select: none;
-  -webkit-user-drag: none;
 }
 
-/* KAKI — SEJAJAR DAN TIDAK BERGOYANG */
+/* KAKI: NAIK DAN MASUK KE BAWAH ROK */
 .leg-left {
   width: 25%;
   height: 25%;
-  left: 26%;
-  bottom: 1%;
+  left: 27%;
+  bottom: 8%;
   z-index: 2;
 }
 
 .leg-right {
   width: 25%;
   height: 25%;
-  right: 26%;
-  bottom: 1%;
+  right: 27%;
+  bottom: 8%;
   z-index: 2;
 }
 
-/* BADAN — MENUTUP SAMBUNGAN KAKI DAN BAHU */
+/* BADAN: BAGIAN UTAMA */
 .body {
-  width: 52%;
-  height: 44%;
-  left: 24%;
-  top: 36%;
+  width: 54%;
+  height: 45%;
+  left: 23%;
+  top: 35%;
   z-index: 3;
   transform-origin: 50% 15%;
-  animation: body-idle 2.8s ease-in-out infinite;
+  animation: body-idle 3s ease-in-out infinite;
 }
 
-/* TANGAN KIRI — UKURAN SAMA */
+/* TANGAN: LEBIH KECIL DAN MENDEKAT KE BAHU */
 .arm-left {
-  width: 39%;
-  height: 38%;
-  left: 0%;
-  top: 37%;
+  width: 30%;
+  height: 33%;
+  left: 8%;
+  top: 38%;
   z-index: 2;
-  object-fit: contain;
-  transform-origin: 88% 26%;
+  transform-origin: 88% 25%;
   animation: left-wave 1.5s ease-in-out infinite;
 }
 
-/* TANGAN KANAN — UKURAN SAMA */
 .arm-right {
-  width: 39%;
-  height: 38%;
-  right: 0%;
+  width: 30%;
+  height: 33%;
+  right: 8%;
+  top: 38%;
   z-index: 2;
-  top: 37%;
-  object-fit: contain;
-  transform-origin: 12% 26%;
+  transform-origin: 12% 25%;
   animation: right-wave 1.7s ease-in-out infinite;
 }
 
-/* KEPALA — LEBIH BESAR DAN TURUN KE LEHER */
+/* KEPALA: LEBIH BESAR DAN TURUN KE KERAH */
 .head {
-  width: 57%;
-  height: 39%;
-  left: 21.5%;
-  top: 5%;
+  width: 60%;
+  height: 40%;
+  left: 20%;
+  top: 10%;
   z-index: 5;
-  transform-origin: 50% 88%;
+  transform-origin: 50% 90%;
   animation: head-idle 3s ease-in-out infinite;
 }
 
-/* BADAN BERNAFAS */
+/* ANIMASI HALUS */
 @keyframes body-idle {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
 }
 
-/* KEPALA */
 @keyframes head-idle {
-  0%, 100% {
-    transform: rotate(-1deg) translateY(0);
-  }
-  50% {
-    transform: rotate(1.5deg) translateY(-2px);
-  }
+  0%, 100% { transform: rotate(-1deg); }
+  50% { transform: rotate(1deg) translateY(-2px); }
 }
 
-/* TANGAN KIRI */
 @keyframes left-wave {
-  0%, 100% {
-    transform: rotate(-4deg);
-  }
-  25% {
-    transform: rotate(10deg);
-  }
-  50% {
-    transform: rotate(-2deg);
-  }
-  75% {
-    transform: rotate(12deg);
-  }
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(9deg); }
 }
 
-/* TANGAN KANAN */
 @keyframes right-wave {
-  0%, 100% {
-    transform: rotate(4deg);
-  }
-  25% {
-    transform: rotate(-9deg);
-  }
-  50% {
-    transform: rotate(2deg);
-  }
-  75% {
-    transform: rotate(-11deg);
-  }
+  0%, 100% { transform: rotate(4deg); }
+  50% { transform: rotate(-9deg); }
 }
 
-/* UKURAN HP */
 @media (max-width: 480px) {
   .bara-character {
     width: 290px;
