@@ -1,7 +1,8 @@
 
 import { NextResponse } from "next/server";
+import path from "node:path";
 import { requireUser } from "@/lib/supabase";
-import { userSandbox } from "@/lib/sandbox";
+import { userSandbox, safePath } from "@/lib/sandbox";
 import {
   assertAccountAccess,
   assertNotMuted,
@@ -11,10 +12,13 @@ import {
 import {
   enableMaintenance,
   disableMaintenance,
+  getMaintenanceState,
 } from "@/lib/maintenance";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const WORKSPACE = "/home/barateriminal";
 
 type ControlAction =
   | "ban"
@@ -24,17 +28,8 @@ type ControlAction =
   | "mute"
   | "unmute";
 
-type ControlCommand = {
-  action: ControlAction;
-  email: string;
-  duration?: string;
-};
-
-function parseControlCommand(
-  command: string
-): ControlCommand | null {
+function parseControlCommand(command: string) {
   const parts = command.trim().split(/\s+/);
-
   const match = parts[0]?.match(
     /^\/(ban|unban|jail|unjail|mute|unmute)$/i
   );
@@ -55,30 +50,20 @@ function parseControlCommand(
     throw new Error("Format email tidak valid.");
   }
 
-  const needsDuration =
-    action === "ban" || action === "jail";
+  const needsDuration = action === "ban" || action === "jail";
 
   if (needsDuration && parts.length !== 3) {
-    throw new Error(
-      `Durasi wajib diisi. Contoh: /${action} ${email} 1h`
-    );
+    throw new Error(`Durasi wajib diisi. Contoh: /${action} ${email} 1h`);
   }
 
   if (!needsDuration && parts.length !== 2) {
-    throw new Error(
-      `Command /${action} tidak membutuhkan durasi.`
-    );
+    throw new Error(`Command /${action} tidak membutuhkan durasi.`);
   }
 
   const duration = parts[2];
 
-  if (
-    duration &&
-    !/^([1-9]\d*)([hd])$/i.test(duration)
-  ) {
-    throw new Error(
-      "Format durasi harus menggunakan h atau d. Contoh: 1h atau 7d."
-    );
+  if (duration && !/^([1-9]\d*)([hd])$/i.test(duration)) {
+    throw new Error("Durasi harus menggunakan h atau d.");
   }
 
   return { action, email, duration };
@@ -98,139 +83,107 @@ function parseMaintenanceCommand(command: string) {
   const message = match[1].trim();
   const duration = match[2].toLowerCase();
 
-  if (!message) {
-    throw new Error("Pesan maintenance tidak boleh kosong.");
+  if (!message || message.length > 500) {
+    throw new Error("Pesan maintenance harus 1–500 karakter.");
   }
 
-  if (message.length > 500) {
-    throw new Error("Pesan maksimal 500 karakter.");
-  }
-
-  const durationMatch = duration.match(/^([1-9]\d*)([hd])$/i);
-
-  if (!durationMatch) {
-    throw new Error("Durasi tidak valid.");
-  }
-
-  const amount = Number(durationMatch[1]);
-  const unit = durationMatch[2].toLowerCase();
-
+  const amount = Number(duration.slice(0, -1));
+  const unit = duration.slice(-1);
   const hours = unit === "h" ? amount : amount * 24;
 
-  if (hours > 365 * 24) {
-    throw new Error("Durasi maksimal 365 hari.");
+  if (!Number.isSafeInteger(amount) || hours > 365 * 24) {
+    throw new Error("Durasi maksimal maintenance adalah 365 hari.");
   }
 
   return { message, duration };
 }
 
+function resolveCwd(current: string, requested: string) {
+  const base = safePath(current || WORKSPACE);
+
+  const destination =
+    requested === "~" || requested === ""
+      ? WORKSPACE
+      : path.posix.resolve(base, requested);
+
+  const safe = safePath(destination);
+
+  return safe;
+}
+
+function shellQuote(value: string) {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
 export async function POST(req: Request) {
   try {
     const user = await requireUser();
-
     const body = await req.json();
+
     const command = String(body.command || "").trim();
+    const cwd = safePath(String(body.cwd || WORKSPACE));
 
     if (!command) {
-      return NextResponse.json(
-        {
-          stdout: "",
-          stderr: "Command tidak boleh kosong.",
-          exitCode: 1,
-        },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        stdout: "",
+        stderr: "Command tidak boleh kosong.",
+        exitCode: 1,
+        cwd,
+      });
     }
 
     if (command.length > 4000) {
-      return NextResponse.json(
-        {
-          stdout: "",
-          stderr: "Command terlalu panjang. Maksimal 4000 karakter.",
-          exitCode: 1,
-        },
-        { status: 400 }
-      );
+      throw new Error("Command maksimal 4000 karakter.");
     }
 
-    // =====================================
-    // GLOBAL MAINTENANCE ON
-    // =====================================
+    // MAINTENANCE ON
     if (/^\/maintance(?:\s|$)/i.test(command)) {
-      const allowed = await hasPanelSession();
-
-      if (!allowed) {
-        return NextResponse.json(
-          {
-            stdout: "",
-            stderr: "Akses ditolak. Admin panel session diperlukan.",
-            exitCode: 1,
-          },
-          { status: 403 }
-        );
+      if (!(await hasPanelSession())) {
+        throw new Error("Akses ditolak. Admin panel session diperlukan.");
       }
 
-      const { message, duration } =
-        parseMaintenanceCommand(command);
+      const { message, duration } = parseMaintenanceCommand(command);
 
       await enableMaintenance(message, duration);
+
+      const maintenance = await getMaintenanceState();
 
       return NextResponse.json({
         stdout:
           "GLOBAL MAINTENANCE BERHASIL DIAKTIFKAN\n" +
-          `Pesan: ${message}\n` +
-          `Durasi: ${duration}\n` +
-          "Website sekarang menampilkan halaman maintenance.",
+          `Pesan: ${message}\nDurasi: ${duration}\n`,
         stderr: "",
         exitCode: 0,
+        cwd,
+        maintenance,
       });
     }
 
-    // =====================================
-    // GLOBAL MAINTENANCE OFF
-    // =====================================
+    // MAINTENANCE OFF
     if (/^\/unmaintance$/i.test(command)) {
-      const allowed = await hasPanelSession();
-
-      if (!allowed) {
-        return NextResponse.json(
-          {
-            stdout: "",
-            stderr: "Akses ditolak. Admin panel session diperlukan.",
-            exitCode: 1,
-          },
-          { status: 403 }
-        );
+      if (!(await hasPanelSession())) {
+        throw new Error("Akses ditolak. Admin panel session diperlukan.");
       }
 
       await disableMaintenance();
 
+      const maintenance = await getMaintenanceState();
+
       return NextResponse.json({
-        stdout:
-          "GLOBAL MAINTENANCE BERHASIL DINONAKTIFKAN\n" +
-          "Website kembali normal.",
+        stdout: "GLOBAL MAINTENANCE DINONAKTIFKAN\n",
         stderr: "",
         exitCode: 0,
+        cwd,
+        maintenance,
       });
     }
 
-    // =====================================
-    // ACCOUNT MODERATION COMMANDS
-    // =====================================
+    // ACCOUNT MODERATION
     const control = parseControlCommand(command);
 
-    if (control !== null) {
-      const allowed = await hasPanelSession();
-
-      if (!allowed) {
-        return NextResponse.json(
-          {
-            stdout: "",
-            stderr: "Akses ditolak. Admin panel session diperlukan.",
-            exitCode: 1,
-          },
-          { status: 403 }
-        );
+    if (control) {
+      if (!(await hasPanelSession())) {
+        throw new Error("Akses ditolak. Admin panel session diperlukan.");
       }
 
       const result = await setAccountControl(
@@ -246,45 +199,81 @@ export async function POST(req: Request) {
           `Action: ${control.action}\n` +
           `Status: ${result.status}\n` +
           `Muted: ${result.muted}\n` +
-          `Expires: ${result.expires_at || "Never"}`,
+          `Expires: ${result.expires_at || "Never"}\n`,
         stderr: "",
         exitCode: 0,
+        cwd,
       });
     }
 
-    // =====================================
-    // NORMAL LINUX TERMINAL
-    // =====================================
+    // LINUX
     await assertAccountAccess(user.id);
     await assertNotMuted(user.id);
 
     const sbx = await userSandbox(user.id);
 
+    // CD: simpan direktori kerja untuk request berikutnya.
+    const cdMatch = command.match(/^cd(?:\s+(.+))?$/);
+
+    if (cdMatch) {
+      let requested = (cdMatch[1] || "~").trim();
+
+      if (
+        (requested.startsWith('"') && requested.endsWith('"')) ||
+        (requested.startsWith("'") && requested.endsWith("'"))
+      ) {
+        requested = requested.slice(1, -1);
+      }
+
+      const nextCwd = resolveCwd(cwd, requested);
+
+      const check = await sbx.runCommand({
+        cmd: "test",
+        args: ["-d", nextCwd],
+        timeoutMs: 10000,
+      });
+
+      if (check.exitCode !== 0) {
+        return NextResponse.json({
+          stdout: "",
+          stderr: `cd: ${requested}: No such directory`,
+          exitCode: 1,
+          cwd,
+        });
+      }
+
+      return NextResponse.json({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        cwd: nextCwd,
+      });
+    }
+
+    // Semua command dijalankan dari cwd terakhir.
     const result = await sbx.runCommand({
       cmd: "bash",
       args: [
         "-lc",
-        "cd /vercel/sandbox && " + command,
+        `cd ${shellQuote(cwd)} && ${command}`,
       ],
-      timeoutMs: 50_000,
+      timeoutMs: 50000,
     });
 
     return NextResponse.json({
-      stdout: result.stdout || "",
-      stderr: result.stderr || "",
+      stdout: await result.stdout(),
+      stderr: await result.stderr(),
       exitCode: result.exitCode ?? 0,
+      cwd,
     });
   } catch (error: any) {
-    const message =
-      error?.message || "Terjadi kesalahan pada terminal.";
+    const message = error?.message || "Terminal error.";
 
     const status =
-      message.includes("UNAUTHORIZED") ||
-      message.toLowerCase().includes("login")
-        ? 401
-        : message.includes("ACCOUNT_BANNED")
-          ? 403
-          : 500;
+      message.includes("UNAUTHORIZED") ? 401 :
+      message.includes("ACCOUNT_BANNED") ||
+      message.includes("ACCOUNT_JAILED") ? 403 :
+      message.includes("Akses ditolak") ? 403 : 500;
 
     return NextResponse.json(
       {
@@ -296,4 +285,3 @@ export async function POST(req: Request) {
     );
   }
 }
-  
