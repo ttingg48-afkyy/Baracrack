@@ -1,13 +1,10 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
 import { createBrowserClient } from "@supabase/ssr";
 import JsonPanel from "@/components/JsonPanel";
-
-type Entry = {
-  name: string;
-  type: "dir" | "file";
-};
+import UpdateManager from "@/components/UpdateManager";
 
 type Tab = "terminal" | "files" | "editor";
 
@@ -38,11 +35,8 @@ export default function Dashboard() {
     "BARA TERMINAL V4.0\nLIVE CONSOLE READY\n"
   );
 
-  const [path, setPath] = useState(".");
-  const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
-  const [preview, setPreview] = useState("");
 
   const api = useCallback(
     async (url: string, options?: RequestInit) => {
@@ -250,7 +244,6 @@ export default function Dashboard() {
     setBusy(true);
 
     try {
-      // Tutup sesi panel JSON sebelum logout.
       try {
         await fetch("/api/control", {
           method: "POST",
@@ -259,7 +252,7 @@ export default function Dashboard() {
           body: JSON.stringify({ action: "lock" }),
         });
       } catch {
-        // Lanjutkan logout walaupun permintaan lock gagal.
+        // Tetap lanjut logout.
       }
 
       const { error } = await supabase.auth.signOut();
@@ -273,7 +266,6 @@ export default function Dashboard() {
       setOutput("BARA TERMINAL V4.0\nSession ended.\n");
       setFile("");
       setContent("");
-      setPreview("");
       setMessage("");
     } catch (error: any) {
       setMessage(error.message || "Logout gagal.");
@@ -360,39 +352,10 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   }
 
-  // FILE MANAGER
-  async function fetchFolder(folder: string) {
-    const data = await api(
-      "/api/files?path=" + encodeURIComponent(folder)
-    );
-
-    setEntries(data.entries || []);
-    setPath(folder);
-  }
-
-  async function refresh(folder = path) {
+  // OPEN EDITOR
+  async function openFileFromPath(target: string) {
     if (busy) return;
 
-    setBusy(true);
-
-    try {
-      await fetchFolder(folder);
-      setMessage("Folder berhasil diperbarui.");
-    } catch (error: any) {
-      setMessage(error.message || "Gagal membuka folder.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function fullPath(name: string) {
-    return path === "." ? name : `${path}/${name}`;
-  }
-
-  async function openFile(name: string) {
-    if (busy) return;
-
-    const target = fullPath(name);
     setBusy(true);
 
     try {
@@ -411,7 +374,6 @@ export default function Dashboard() {
 
       setFile(target);
       setContent(data.content || "");
-      setPreview("");
       setTab("editor");
     } catch (error: any) {
       setMessage(error.message || "Gagal membuka file.");
@@ -420,6 +382,7 @@ export default function Dashboard() {
     }
   }
 
+  // SAVE EDITOR
   async function saveFile() {
     if (!file || busy) return;
 
@@ -439,128 +402,6 @@ export default function Dashboard() {
       setMessage("File berhasil disimpan.");
     } catch (error: any) {
       setMessage(error.message || "Gagal menyimpan file.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function createItem(type: "file" | "folder") {
-    if (busy) return;
-
-    const name = window.prompt(`Nama ${type}:`);
-
-    if (!name?.trim()) return;
-
-    const target = fullPath(name.trim());
-    setBusy(true);
-
-    try {
-      await api("/api/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          type === "folder"
-            ? { action: "mkdir", path: target }
-            : { action: "write", path: target, content: "" }
-        ),
-      });
-
-      await fetchFolder(path);
-
-      setMessage(
-        type === "folder"
-          ? "Folder berhasil dibuat."
-          : "File berhasil dibuat."
-      );
-    } catch (error: any) {
-      setMessage(error.message || "Gagal membuat item.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deleteFile(name: string) {
-    if (busy) return;
-
-    if (!window.confirm(`Hapus ${name}?`)) return;
-
-    const target = fullPath(name);
-    setBusy(true);
-
-    try {
-      await api("/api/files", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "delete",
-          path: target,
-        }),
-      });
-
-      await fetchFolder(path);
-      setMessage("Item berhasil dihapus.");
-    } catch (error: any) {
-      setMessage(error.message || "Gagal menghapus item.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function downloadFile(name: string) {
-    try {
-      const response = await fetch(
-        "/api/files?action=download&path=" +
-          encodeURIComponent(fullPath(name)),
-        {
-          credentials: "same-origin",
-          cache: "no-store",
-        }
-      );
-
-      if (!response.ok) {
-        let errorMessage = "Download gagal.";
-
-        try {
-          const data = await response.json();
-          errorMessage = data.error || errorMessage;
-        } catch {
-          // Abaikan respons non-JSON.
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      URL.revokeObjectURL(url);
-    } catch (error: any) {
-      setMessage(error.message || "Download gagal.");
-    }
-  }
-
-  async function previewFile(name: string) {
-    if (busy) return;
-
-    setBusy(true);
-
-    try {
-      const data = await api(
-        "/api/files?action=preview&path=" +
-          encodeURIComponent(fullPath(name))
-      );
-
-      setPreview(data.content || "");
-      setMessage("Preview: " + name);
-    } catch (error: any) {
-      setMessage(error.message || "Preview gagal.");
     } finally {
       setBusy(false);
     }
@@ -767,12 +608,9 @@ export default function Dashboard() {
 
         <button
           className={tab === "files" ? "active" : ""}
-          onClick={() => {
-            setTab("files");
-            void refresh(".");
-          }}
+          onClick={() => setTab("files")}
         >
-          FILES
+          UPDATE / IMPORT
         </button>
 
         <button
@@ -847,128 +685,8 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* FILE MANAGER */}
-      {tab === "files" && (
-        <section className="panel">
-          <small>WORKSPACE STORAGE</small>
-          <h2>FILE MANAGER</h2>
-
-          <div className="command">
-            <input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="Workspace path"
-            />
-
-            <button
-              className="amber"
-              disabled={busy}
-              onClick={() => void refresh()}
-            >
-              OPEN
-            </button>
-          </div>
-
-          <div className="actions">
-            <button disabled={busy} onClick={() => void refresh()}>
-              REFRESH
-            </button>
-
-            <button
-              disabled={busy}
-              onClick={() => void createItem("folder")}
-            >
-              + FOLDER
-            </button>
-
-            <button
-              disabled={busy}
-              onClick={() => void createItem("file")}
-            >
-              + FILE
-            </button>
-
-            <button
-              disabled={busy}
-              onClick={() => {
-                const parent = path.split("/").slice(0, -1).join("/");
-                void refresh(parent || ".");
-              }}
-            >
-              ↑ PARENT
-            </button>
-          </div>
-
-          <div className="fileList">
-            {entries.length === 0 ? (
-              <div className="fileRow">
-                <span>Folder kosong atau belum dimuat.</span>
-              </div>
-            ) : (
-              entries.map((entry) => (
-                <div className="fileRow" key={entry.name}>
-                  <button
-                    className="fileName"
-                    disabled={busy}
-                    onClick={() => {
-                      if (entry.type === "dir") {
-                        void refresh(fullPath(entry.name));
-                      } else {
-                        void openFile(entry.name);
-                      }
-                    }}
-                  >
-                    {entry.type === "dir" ? "📁" : "📄"} {entry.name}
-                  </button>
-
-                  {entry.type === "file" && (
-                    <div className="actions">
-                      <button
-                        disabled={busy}
-                        onClick={() => void openFile(entry.name)}
-                      >
-                        EDIT
-                      </button>
-
-                      <button
-                        disabled={busy}
-                        onClick={() => void previewFile(entry.name)}
-                      >
-                        VIEW
-                      </button>
-
-                      <button
-                        disabled={busy}
-                        onClick={() => void downloadFile(entry.name)}
-                      >
-                        DOWNLOAD
-                      </button>
-
-                      <button
-                        className="red"
-                        disabled={busy}
-                        onClick={() => void deleteFile(entry.name)}
-                      >
-                        DELETE
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          {preview !== "" && (
-            <section>
-              <h3>FILE PREVIEW</h3>
-              <pre className="console">{preview}</pre>
-              <button onClick={() => setPreview("")}>
-                CLOSE PREVIEW
-              </button>
-            </section>
-          )}
-        </section>
-      )}
+      {/* UPDATE / IMPORT */}
+      {tab === "files" && <UpdateManager />}
 
       {/* EDITOR */}
       {tab === "editor" && (
@@ -978,7 +696,7 @@ export default function Dashboard() {
 
           {!file && (
             <div className="notice">
-              Pilih file melalui menu FILES untuk mulai mengedit.
+              Pilih file melalui workspace untuk mulai mengedit.
             </div>
           )}
 
