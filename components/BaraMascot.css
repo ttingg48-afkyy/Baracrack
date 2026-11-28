@@ -1,5 +1,5 @@
 
-.bara-mascot {
+.bara-character {
   position: relative;
   width: 210px;
   height: 245px;
@@ -8,152 +8,118 @@
   overflow: visible;
 }
 
-/* SEMUA BAGIAN */
 .bara-part {
   position: absolute;
   display: block;
   object-fit: contain;
+  object-position: center;
   user-select: none;
   pointer-events: none;
+  -webkit-user-drag: none;
 }
 
-/* BADAN */
-.bara-badan {
-  width: 55%;
+/* Posisi tiap bagian memakai kotak ukuran tetap.
+   object-fit contain menjaga rasio PNG berbeda-beda. */
+
+.bara-character .body {
+  width: 54%;
   height: 43%;
-  left: 22.5%;
+  left: 23%;
   top: 37%;
   z-index: 2;
-  transform-origin: 50% 20%;
-  animation: bara-body 1.4s ease-in-out infinite;
+  transform-origin: 50% 15%;
+  animation: body-bounce 1.5s ease-in-out infinite;
 }
 
-/* KEPALA */
-.bara-kepala {
-  width: 58%;
-  height: 37%;
-  left: 21%;
-  top: 3%;
+.bara-character .head {
+  width: 59%;
+  height: 38%;
+  left: 20.5%;
+  top: 2%;
   z-index: 5;
   transform-origin: 50% 85%;
-  animation: bara-head 2s ease-in-out infinite;
+  animation: head-move 2.2s ease-in-out infinite;
 }
 
-/* TANGAN KIRI */
-.bara-tangankiri {
+.bara-character .arm-left {
   width: 39%;
   height: 38%;
   left: 0;
   top: 38%;
   z-index: 4;
-  transform-origin: 85% 15%;
-  animation: bara-wave 1s ease-in-out infinite;
+  transform-origin: 85% 18%;
+  animation: wave-left 0.85s ease-in-out infinite;
 }
 
-/* TANGAN KANAN */
-.bara-tangankanan {
+.bara-character .arm-right {
   width: 39%;
   height: 38%;
   right: 0;
   top: 38%;
   z-index: 4;
-  transform-origin: 15% 15%;
-  animation: bara-mock 1.3s ease-in-out infinite;
+  transform-origin: 15% 18%;
+  animation: mock-right 1.1s ease-in-out infinite;
 }
 
-/* KAKI KIRI */
-.bara-kakikiri {
-  width: 28%;
+.bara-character .leg-left {
+  width: 29%;
   height: 29%;
-  left: 23%;
+  left: 22%;
   bottom: 0;
   z-index: 1;
-  transform-origin: 75% 10%;
-  animation: bara-left-leg 1s ease-in-out infinite;
+  transform-origin: 75% 8%;
+  animation: leg-left 1.2s ease-in-out infinite;
 }
 
-/* KAKI KANAN */
-.bara-kakikanan {
-  width: 28%;
+.bara-character .leg-right {
+  width: 29%;
   height: 29%;
-  right: 23%;
+  right: 22%;
   bottom: 0;
   z-index: 1;
-  transform-origin: 25% 10%;
-  animation: bara-right-leg 1s ease-in-out infinite;
+  transform-origin: 25% 8%;
+  animation: leg-right 1.2s ease-in-out infinite;
 }
 
-/* ANIMASI KEPALA */
-@keyframes bara-head {
-  0%, 100% {
-    transform: rotate(-4deg) translateY(0);
-  }
-  50% {
-    transform: rotate(5deg) translateY(-5px);
-  }
+@keyframes head-move {
+  0%, 100% { transform: rotate(-3deg) translateY(0); }
+  50% { transform: rotate(4deg) translateY(-4px); }
 }
 
-/* BADAN BERGERAK */
-@keyframes bara-body {
-  0%, 100% {
-    transform: translateY(0) rotate(-1deg);
-  }
-  50% {
-    transform: translateY(-3px) rotate(1deg);
-  }
+@keyframes body-bounce {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-3px) rotate(1deg); }
 }
 
-/* TANGAN KIRI MELAMBAI */
-@keyframes bara-wave {
-  0%, 100% {
-    transform: rotate(-12deg);
-  }
-  50% {
-    transform: rotate(25deg);
-  }
+@keyframes wave-left {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(25deg); }
 }
 
-/* TANGAN KANAN MENGEJEK */
-@keyframes bara-mock {
-  0%, 100% {
-    transform: rotate(8deg) translateY(0);
-  }
-  50% {
-    transform: rotate(-13deg) translateY(-7px);
-  }
+@keyframes mock-right {
+  0%, 100% { transform: rotate(8deg) translateY(0); }
+  50% { transform: rotate(-14deg) translateY(-5px); }
 }
 
-/* KAKI KIRI */
-@keyframes bara-left-leg {
-  0%, 100% {
-    transform: rotate(-5deg) translateY(0);
-  }
-  50% {
-    transform: rotate(8deg) translateY(3px);
-  }
+@keyframes leg-left {
+  0%, 100% { transform: rotate(-5deg) translateY(0); }
+  50% { transform: rotate(7deg) translateY(2px); }
 }
 
-/* KAKI KANAN */
-@keyframes bara-right-leg {
-  0%, 100% {
-    transform: rotate(5deg) translateY(3px);
-  }
-  50% {
-    transform: rotate(-8deg) translateY(0);
-  }
+@keyframes leg-right {
+  0%, 100% { transform: rotate(5deg) translateY(2px); }
+  50% { transform: rotate(-7deg) translateY(0); }
 }
 
-/* RESPONSIVE */
 @media (max-width: 480px) {
-  .bara-mascot {
-    width: 165px;
-    height: 195px;
+  .bara-character {
+    width: 160px;
+    height: 190px;
   }
 }
 
-/* AKSESIBILITAS */
 @media (prefers-reduced-motion: reduce) {
   .bara-part {
     animation: none !important;
   }
-  }
+}
