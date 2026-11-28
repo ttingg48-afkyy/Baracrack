@@ -20,7 +20,7 @@ function errorStatus(error: any) {
   return 500;
 }
 
-function validRelativePath(value: string) {
+function safeParts(value: string) {
   const normalized = value.replace(/\\/g, "/");
   const parts = normalized.split("/");
 
@@ -39,34 +39,7 @@ function validRelativePath(value: string) {
     throw new Error("Nama atau lokasi file tidak valid.");
   }
 
-  return parts.join("/");
-}
-
-async function ensureDirectory(sbx: any, directory: string) {
-  const parts = directory.split("/").filter(Boolean);
-  let current = "";
-
-  for (const part of parts) {
-    current += "/" + part;
-
-    try {
-      await sbx.mkDir(current);
-    } catch (error: any) {
-      // Abaikan hanya jika folder memang sudah tersedia.
-      const check = await sbx.runCommand({
-        cmd: "test",
-        args: ["-d", current],
-      });
-
-      if (check.exitCode !== 0) {
-        throw new Error(
-          `Gagal membuat folder ${current}: ${
-            error?.message || "Folder tidak tersedia."
-          }`
-        );
-      }
-    }
-  }
+  return parts;
 }
 
 export async function POST(req: Request) {
@@ -77,11 +50,8 @@ export async function POST(req: Request) {
     const form = await req.formData();
 
     const uploaded = form.get("file");
-    const folder = String(form.get("folder") || "").trim();
-
-    const relativePath = validRelativePath(
-      String(form.get("relativePath") || "")
-    );
+    const mode = String(form.get("mode") || "");
+    const relativePath = String(form.get("relativePath") || "");
 
     if (!(uploaded instanceof File)) {
       return NextResponse.json(
@@ -90,38 +60,61 @@ export async function POST(req: Request) {
       );
     }
 
-    if (
-      !/^[a-zA-Z0-9._-]+$/.test(folder) ||
-      folder === "." ||
-      folder === ".."
-    ) {
+    if (mode !== "file" && mode !== "folder") {
       return NextResponse.json(
-        { error: "Nama folder tujuan tidak valid." },
+        { error: "Mode import tidak valid." },
         { status: 400 }
       );
     }
 
     if (uploaded.size > 4 * 1024 * 1024) {
       return NextResponse.json(
-        { error: "Ukuran file maksimal 4 MB." },
+        { error: "Ukuran maksimal satu file adalah 4 MB." },
         { status: 413 }
       );
     }
 
-    const destination =
-      `/home/barateriminal/${folder}/${relativePath}`;
+    const parts = safeParts(relativePath);
 
-    const parent = destination.substring(
+    let destination: string;
+
+    if (mode === "file") {
+      if (parts.length !== 1) {
+        throw new Error("Import satu file hanya menerima satu file.");
+      }
+
+      destination = `/home/barateriminal/${parts[0]}`;
+    } else {
+      if (parts.length < 2) {
+        throw new Error("Struktur folder project tidak valid.");
+      }
+
+      const projectName = parts[0];
+      const insideProject = parts.slice(1).join("/");
+
+      destination =
+        `/home/barateriminal/${projectName}/${insideProject}`;
+    }
+
+    const parent = destination.slice(
       0,
       destination.lastIndexOf("/")
     );
 
     const sbx = await userSandbox(user.id);
 
-    // Buat direktori secara bertahap agar parent tidak hilang.
-    await ensureDirectory(sbx, parent);
+    const mkdir = await sbx.runCommand({
+      cmd: "mkdir",
+      args: ["-p", parent],
+      timeoutMs: 15000,
+    });
 
-    // Simpan isi file tanpa mengubah bytes.
+    if (mkdir.exitCode !== 0) {
+      throw new Error(
+        `Gagal membuat direktori ${parent}: ${await mkdir.stderr()}`
+      );
+    }
+
     await sbx.writeFiles([
       {
         path: destination,
@@ -139,7 +132,7 @@ export async function POST(req: Request) {
     console.error("[BARA UPDATE]", error);
 
     return NextResponse.json(
-      { error: error.message || "Upload gagal." },
+      { error: error.message || "Import gagal." },
       { status: errorStatus(error) }
     );
   }
