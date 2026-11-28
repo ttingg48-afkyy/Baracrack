@@ -19,11 +19,6 @@ type DashboardProps = {
   maintenance: MaintenanceState;
 };
 
-type PreviewPort = {
-  port: number;
-  url: string;
-};
-
 export default function Dashboard({ maintenance }: DashboardProps) {
   const [supabase] = useState(() =>
     createBrowserClient(
@@ -59,100 +54,35 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
   const [cwd, setCwd] = useState("/home/barateriminal");
 
-  // WEB PREVIEW
-  const [previewPorts, setPreviewPorts] = useState<PreviewPort[]>([]);
-  const [previewChecking, setPreviewChecking] = useState(false);
-  const [previewError, setPreviewError] = useState("");
+  // PORT NOTICE
+  const [showPortNotice, setShowPortNotice] = useState(false);
+  const [hidePortNotice, setHidePortNotice] = useState(false);
 
   // API HELPER
-  const api = useCallback(
-    async (url: string, options?: RequestInit) => {
-      const response = await fetch(url, {
-        ...options,
-        credentials: "same-origin",
-        cache: "no-store",
-      });
+  const api = useCallback(async (url: string, options?: RequestInit) => {
+    const response = await fetch(url, {
+      ...options,
+      credentials: "same-origin",
+      cache: "no-store",
+    });
 
-      const raw = await response.text();
-      let data: any = {};
-
-      try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {
-        throw new Error("Server mengirim respons tidak valid.");
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            data.stderr ||
-            `Request gagal (${response.status}).`
-        );
-      }
-
-      return data;
-    },
-    []
-  );
-
-  // REFRESH WEB PREVIEW
-  const refreshPreview = useCallback(async () => {
-    setPreviewChecking(true);
+    const raw = await response.text();
+    let data: any = {};
 
     try {
-      const data = await api("/api/preview");
-
-      setPreviewPorts(
-        Array.isArray(data.ports) ? data.ports : []
-      );
-
-      setPreviewError("");
-    } catch (error: any) {
-      setPreviewError(
-        error.message || "Gagal memeriksa port."
-      );
-    } finally {
-      setPreviewChecking(false);
-    }
-  }, [api]);
-
-  // AUTO DETECT PORT EVERY 5 SECONDS
-  useEffect(() => {
-    if (!user || tab !== "terminal") return;
-
-    let active = true;
-
-    async function checkPorts() {
-      try {
-        const data = await api("/api/preview");
-
-        if (active) {
-          setPreviewPorts(
-            Array.isArray(data.ports) ? data.ports : []
-          );
-          setPreviewError("");
-        }
-      } catch (error: any) {
-        if (active) {
-          setPreviewError(
-            error.message || "Gagal memeriksa port."
-          );
-        }
-      }
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error("Server mengirim respons tidak valid.");
     }
 
-    void checkPorts();
+    if (!response.ok) {
+      throw new Error(
+        data.error || data.stderr || `Request gagal (${response.status}).`
+      );
+    }
 
-    const timer = window.setInterval(
-      checkPorts,
-      5000
-    );
-
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [user, tab, api]);
+    return data;
+  }, []);
 
   // AUTH SESSION
   useEffect(() => {
@@ -161,9 +91,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     async function init() {
       try {
         const { data, error } = await supabase.auth.getUser();
-
         if (error) throw error;
-
         if (active) setUser(data.user);
       } catch {
         if (active) setUser(null);
@@ -177,9 +105,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) {
-        setUser(session?.user || null);
-      }
+      if (active) setUser(session?.user || null);
     });
 
     return () => {
@@ -187,6 +113,22 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       subscription.unsubscribe();
     };
   }, [supabase]);
+
+  // SHOW NOTICE AFTER LOGIN
+  useEffect(() => {
+    if (!user) {
+      setShowPortNotice(false);
+      return;
+    }
+
+    const hidden =
+      typeof window !== "undefined" &&
+      sessionStorage.getItem("bara-hide-port-notice") === "1";
+
+    if (!hidden) {
+      setShowPortNotice(true);
+    }
+  }, [user]);
 
   // LIVE MAINTENANCE CHECK
   useEffect(() => {
@@ -204,29 +146,29 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
         const data = await response.json();
 
-        if (
-          active &&
-          typeof data.enabled === "boolean"
-        ) {
+        if (active && typeof data.enabled === "boolean") {
           setMaintenanceState(data);
         }
       } catch {
-        // Akan mencoba kembali pada interval berikutnya.
+        // Retry berikutnya.
       }
     }
 
     void checkMaintenance();
-
-    const timer = window.setInterval(
-      checkMaintenance,
-      2000
-    );
+    const timer = window.setInterval(checkMaintenance, 2000);
 
     return () => {
       active = false;
       window.clearInterval(timer);
     };
   }, []);
+
+  function closePortNotice() {
+    setShowPortNotice(false);
+    if (hidePortNotice) {
+      sessionStorage.setItem("bara-hide-port-notice", "1");
+    }
+  }
 
   // AUTH MODE
   function switchMode(next: "login" | "signup") {
@@ -247,9 +189,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       const normalizedEmail = email.trim().toLowerCase();
 
       if (!/^[a-z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail)) {
-        throw new Error(
-          "Registrasi hanya menerima alamat Gmail."
-        );
+        throw new Error("Registrasi hanya menerima alamat Gmail.");
       }
 
       if (password.length < 8) {
@@ -258,9 +198,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       const data = await api("/api/auth", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "send-code",
           email: normalizedEmail,
@@ -270,11 +208,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       setEmail(normalizedEmail);
       setCodeSent(true);
-
-      setMessage(
-        data.message ||
-          "Kode OTP berhasil dikirim melalui Gmail."
-      );
+      setMessage(data.message || "Kode OTP berhasil dikirim melalui Gmail.");
     } catch (error: any) {
       setMessage(error.message || "Gagal mengirim OTP.");
     } finally {
@@ -298,9 +232,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       await api("/api/auth", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "verify-code",
           email: normalizedEmail,
@@ -308,18 +240,15 @@ export default function Dashboard({ maintenance }: DashboardProps) {
         }),
       });
 
-      const { data, error } =
-        await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
 
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error(
-          "Verifikasi berhasil, tetapi login gagal."
-        );
+        throw new Error("Verifikasi berhasil, tetapi login gagal.");
       }
 
       setUser(data.user);
@@ -352,9 +281,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       await api("/api/auth", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "login",
           email: normalizedEmail,
@@ -367,9 +294,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error(
-          "Session belum terbentuk. Coba login lagi."
-        );
+        throw new Error("Session belum terbentuk. Coba login lagi.");
       }
 
       setUser(data.user);
@@ -392,33 +317,26 @@ export default function Dashboard({ maintenance }: DashboardProps) {
         await fetch("/api/control", {
           method: "POST",
           credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action: "lock",
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "lock" }),
         });
       } catch {
         // Tetap lanjut logout.
       }
 
       const { error } = await supabase.auth.signOut();
-
       if (error) throw error;
 
       setUser(null);
       setShowJsonPanel(false);
+      setShowPortNotice(false);
       setTab("terminal");
       setCommand("");
-      setOutput(
-        "BARA TERMINAL V4.0\nSession ended.\n"
-      );
+      setOutput("BARA TERMINAL V4.0\nSession ended.\n");
       setFile("");
       setContent("");
       setMessage("");
       setCwd("/home/barateriminal");
-      setPreviewPorts([]);
     } catch (error: any) {
       setMessage(error.message || "Logout gagal.");
     } finally {
@@ -429,60 +347,36 @@ export default function Dashboard({ maintenance }: DashboardProps) {
   // TERMINAL
   async function run(cmd = command) {
     const selected = cmd.trim();
-
     if (!selected || busy) return;
 
     setCommand("");
     setBusy(true);
 
     setOutput((previous) => {
-      const separator =
-        previous && !previous.endsWith("\n")
-          ? "\n"
-          : "";
-
+      const separator = previous && !previous.endsWith("\n") ? "\n" : "";
       return previous + separator + `$ ${selected}\n`;
     });
 
     try {
       const data = await api("/api/terminal", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          command: selected,
-          cwd,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: selected, cwd }),
       });
 
-      if (data.cwd) {
-        setCwd(data.cwd);
-      }
-
-      if (data.maintenance) {
-        setMaintenanceState(data.maintenance);
-      }
+      if (data.cwd) setCwd(data.cwd);
+      if (data.maintenance) setMaintenanceState(data.maintenance);
 
       const stdout = data.stdout || "";
       const stderr = data.stderr || "";
-
       const result =
-        (stdout ? stdout : "") +
-        (stderr ? stderr : "") +
-        `\n[exit ${data.exitCode ?? "unknown"}]\n`;
+        stdout + stderr + `\n[exit ${data.exitCode ?? "unknown"}]\n`;
 
       setOutput((previous) => previous + result);
-
-      // Refresh preview after running a command.
-      window.setTimeout(() => {
-        void refreshPreview();
-      }, 1000);
     } catch (error: any) {
       setOutput(
         (previous) =>
-          previous +
-          `ERROR: ${error.message || "Command gagal."}\n`
+          previous + `ERROR: ${error.message || "Command gagal."}\n`
       );
     } finally {
       setBusy(false);
@@ -515,18 +409,14 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           2
         ),
       ],
-      {
-        type: "application/json",
-      }
+      { type: "application/json" }
     );
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-
     a.href = url;
     a.download = "bara-terminal-log.json";
     a.click();
-
     URL.revokeObjectURL(url);
   }
 
@@ -539,22 +429,15 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     try {
       const data = await api("/api/files", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "read",
           path: target,
         }),
       });
 
-      if (
-        data.exitCode !== undefined &&
-        data.exitCode !== 0
-      ) {
-        throw new Error(
-          data.stderr || "File tidak bisa dibuka."
-        );
+      if (data.exitCode !== undefined && data.exitCode !== 0) {
+        throw new Error(data.stderr || "File tidak bisa dibuka.");
       }
 
       setFile(target);
@@ -576,9 +459,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     try {
       await api("/api/files", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "write",
           path: file,
@@ -597,9 +478,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
   // GLOBAL MAINTENANCE SCREEN
   if (maintenanceState.enabled) {
     const expiryText = maintenanceState.expires_at
-      ? new Date(
-          maintenanceState.expires_at
-        ).toLocaleString("id-ID", {
+      ? new Date(maintenanceState.expires_at).toLocaleString("id-ID", {
           dateStyle: "long",
           timeStyle: "medium",
           timeZone: "Asia/Jakarta",
@@ -631,53 +510,16 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             boxShadow: "0 20px 70px #0008",
           }}
         >
-          <div
-            style={{
-              width: 68,
-              height: 68,
-              margin: "0 auto 22px",
-              display: "grid",
-              placeItems: "center",
-              borderRadius: "50%",
-              background: "#302719",
-              color: "#ffbd55",
-              fontSize: 30,
-            }}
-          >
-            ⚙
-          </div>
-
-          <small
-            style={{
-              color: "#a3adba",
-              letterSpacing: 3,
-              fontSize: 11,
-            }}
-          >
+          <div style={{ fontSize: 36, marginBottom: 18 }}>⚙</div>
+          <small style={{ color: "#a3adba", letterSpacing: 3 }}>
             BARA TERMINAL / SYSTEM NOTICE
           </small>
-
-          <h1
-            style={{
-              margin: "18px 0",
-              fontSize: 30,
-              letterSpacing: 1,
-            }}
-          >
+          <h1 style={{ margin: "18px 0", fontSize: 30 }}>
             WEBSITE MAINTENANCE
           </h1>
-
-          <p
-            style={{
-              color: "#c7d0da",
-              fontSize: 16,
-              lineHeight: 1.8,
-              overflowWrap: "anywhere",
-            }}
-          >
+          <p style={{ color: "#c7d0da", lineHeight: 1.8 }}>
             {maintenanceState.message}
           </p>
-
           <div
             style={{
               marginTop: 28,
@@ -690,7 +532,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             <small style={{ color: "#9daaba" }}>
               ESTIMATED MAINTENANCE DURATION
             </small>
-
             <div
               style={{
                 marginTop: 8,
@@ -702,20 +543,11 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               {maintenanceState.duration_label || "ACTIVE"}
             </div>
           </div>
-
-          <p
-            style={{
-              marginTop: 22,
-              color: "#9daaba",
-              fontSize: 13,
-              lineHeight: 1.7,
-            }}
-          >
+          <p style={{ marginTop: 22, color: "#9daaba", lineHeight: 1.7 }}>
             Website sedang dalam pemeliharaan.
             <br />
             Silakan kembali setelah waktu maintenance berakhir.
           </p>
-
           <div
             style={{
               marginTop: 22,
@@ -727,19 +559,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           >
             ESTIMATED END
             <br />
-            <b style={{ color: "#c7d0da" }}>
-              {expiryText}
-            </b>
+            <b style={{ color: "#c7d0da" }}>{expiryText}</b>
           </div>
-
-          <div
-            style={{
-              marginTop: 26,
-              color: "#657383",
-              fontSize: 11,
-              letterSpacing: 2,
-            }}
-          >
+          <div style={{ marginTop: 26, color: "#657383", fontSize: 11 }}>
             BARA TERMINAL · SYSTEM MAINTENANCE
           </div>
         </section>
@@ -766,16 +588,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       <main className="auth">
         <section className="authCard">
           <small>BARA ACCOUNT SYSTEM / V4.0</small>
-
-          <span className="pill">
-            SECURE ACCESS
-          </span>
-
+          <span className="pill">SECURE ACCESS</span>
           <h1>BARA TERMINAL</h1>
-
-          <p>
-            Workspace Linux pribadi dengan sistem autentikasi Gmail.
-          </p>
+          <p>Workspace Linux pribadi dengan sistem autentikasi Gmail.</p>
 
           <div className="actions">
             <button
@@ -785,7 +600,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             >
               LOGIN
             </button>
-
             <button
               className={mode === "signup" ? "lime" : ""}
               onClick={() => switchMode("signup")}
@@ -798,7 +612,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           {!codeSent && (
             <>
               <label>EMAIL ADDRESS</label>
-
               <input
                 type="email"
                 placeholder="nama@gmail.com"
@@ -809,14 +622,11 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               />
 
               <label>PASSWORD</label>
-
               <input
                 type="password"
                 placeholder="Minimal 8 karakter"
                 autoComplete={
-                  mode === "login"
-                    ? "current-password"
-                    : "new-password"
+                  mode === "login" ? "current-password" : "new-password"
                 }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -828,32 +638,22 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           {mode === "login" && (
             <button
               className="lime"
-              style={{
-                display: "block",
-                width: "100%",
-              }}
+              style={{ display: "block", width: "100%" }}
               disabled={busy}
               onClick={login}
             >
-              {busy
-                ? "SIGNING IN..."
-                : "LOGIN TO WORKSPACE →"}
+              {busy ? "SIGNING IN..." : "LOGIN TO WORKSPACE →"}
             </button>
           )}
 
           {mode === "signup" && !codeSent && (
             <button
               className="lime"
-              style={{
-                display: "block",
-                width: "100%",
-              }}
+              style={{ display: "block", width: "100%" }}
               disabled={busy}
               onClick={sendCode}
             >
-              {busy
-                ? "SENDING CODE..."
-                : "SEND VERIFICATION CODE →"}
+              {busy ? "SENDING CODE..." : "SEND VERIFICATION CODE →"}
             </button>
           )}
 
@@ -862,7 +662,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               <div className="otpHeading">
                 <small>EMAIL VERIFICATION</small>
                 <h2>CHECK YOUR GMAIL</h2>
-
                 <p>
                   Kode verifikasi dikirim ke:
                   <br />
@@ -871,7 +670,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               </div>
 
               <label>6-DIGIT OTP CODE</label>
-
               <input
                 className="otpInput"
                 inputMode="numeric"
@@ -880,27 +678,18 @@ export default function Dashboard({ maintenance }: DashboardProps) {
                 maxLength={6}
                 value={code}
                 onChange={(e) =>
-                  setCode(
-                    e.target.value
-                      .replace(/\D/g, "")
-                      .slice(0, 6)
-                  )
+                  setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
                 }
                 disabled={busy}
               />
 
               <button
                 className="lime"
-                style={{
-                  display: "block",
-                  width: "100%",
-                }}
+                style={{ display: "block", width: "100%" }}
                 disabled={busy || code.length !== 6}
                 onClick={verifyCode}
               >
-                {busy
-                  ? "VERIFYING..."
-                  : "VERIFY & CONTINUE →"}
+                {busy ? "VERIFYING..." : "VERIFY & CONTINUE →"}
               </button>
 
               <button
@@ -917,9 +706,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             </>
           )}
 
-          {message && (
-            <div className="notice">{message}</div>
-          )}
+          {message && <div className="notice">{message}</div>}
 
           <p>
             {mode === "signup"
@@ -927,9 +714,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               : "Masuk menggunakan Gmail dan password akun."}
           </p>
 
-          <footer>
-            BARA TERMINAL · ACCOUNT SYSTEM
-          </footer>
+          <footer>BARA TERMINAL · ACCOUNT SYSTEM</footer>
         </section>
       </main>
     );
@@ -938,40 +723,150 @@ export default function Dashboard({ maintenance }: DashboardProps) {
   // DASHBOARD
   return (
     <main className="shell">
+      <style jsx global>{`
+        .portNoticeBackdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 9998;
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
+          padding: 18px;
+          pointer-events: none;
+        }
+        .portNotice {
+          pointer-events: auto;
+          position: relative;
+          width: min(440px, 100%);
+          margin-top: 8px;
+          padding: 17px;
+          border: 1px solid #43505e;
+          border-radius: 16px;
+          background: #111b25;
+          color: #edf4fb;
+          box-shadow: 0 18px 65px #000b;
+          animation: baraNoticeIn .45s cubic-bezier(.2,.8,.2,1);
+        }
+        @keyframes baraNoticeIn {
+          from { opacity: 0; transform: translateY(-22px) scale(.96); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes baraFloat {
+          0%,100% { transform: translateY(0) rotate(-4deg); }
+          50% { transform: translateY(-8px) rotate(4deg); }
+        }
+        @keyframes baraGlow {
+          0%,100% { opacity: .45; }
+          50% { opacity: 1; }
+        }
+        .baraMascot {
+          width: 76px;
+          height: 76px;
+          flex: 0 0 76px;
+          display: grid;
+          place-items: center;
+          border-radius: 22px;
+          background: #243444;
+          font-size: 39px;
+          animation: baraFloat 2.4s ease-in-out infinite;
+        }
+        .baraStar {
+          display: inline-block;
+          color: #b9ef77;
+          animation: baraGlow 1.5s ease-in-out infinite;
+        }
+        .portNoticeClose {
+          position: absolute;
+          top: 9px;
+          right: 10px;
+          width: 30px;
+          height: 30px;
+          border: 0;
+          border-radius: 9px;
+          background: #263442;
+          color: white;
+          font-size: 21px;
+          cursor: pointer;
+        }
+        .portNoticeCheck {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 14px;
+          color: #aebdca;
+          font-size: 12px;
+        }
+        .portNoticeCheck input { accent-color: #b9ef77; }
+      `}</style>
+
+      {showPortNotice && (
+        <div className="portNoticeBackdrop">
+          <section className="portNotice">
+            <button
+              className="portNoticeClose"
+              onClick={closePortNotice}
+              aria-label="Tutup notifikasi"
+            >
+              ×
+            </button>
+
+            <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+              <div className="baraMascot">૮₍ ˶ᵔ ᵕ ᵔ˶ ₎ა</div>
+              <div style={{ paddingRight: 20 }}>
+                <small style={{ color: "#b9ef77", letterSpacing: 1.5 }}>
+                  <span className="baraStar">✦</span> BARA SYSTEM NOTICE
+                </small>
+                <h3 style={{ margin: "7px 0", fontSize: 15 }}>
+                  WEB PREVIEW TIDAK TERSEDIA
+                </h3>
+                <p style={{ margin: 0, color: "#aebdca", fontSize: 12, lineHeight: 1.6 }}>
+                  HTTP port tidak tersedia untuk preview pada versi ini.
+                  Terminal dan workspace tetap bisa digunakan.
+                </p>
+              </div>
+            </div>
+
+            <label className="portNoticeCheck">
+              <input
+                type="checkbox"
+                checked={hidePortNotice}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHidePortNotice(checked);
+                  if (checked) {
+                    sessionStorage.setItem("bara-hide-port-notice", "1");
+                  } else {
+                    sessionStorage.removeItem("bara-hide-port-notice");
+                  }
+                }}
+              />
+              Tidak ditampilkan lagi selama buka website
+            </label>
+          </section>
+        </div>
+      )}
+
       <header>
         <div>
           <small>LIVE CONSOLE / AUTHENTICATED</small>
-
           <h1>
-            BARA TERMINAL{" "}
-            <span className="pill">SAFE MODE</span>
+            BARA TERMINAL <span className="pill">SAFE MODE</span>
           </h1>
-
           <p>{user.email}</p>
         </div>
 
         <div className="headerActions">
-          <button
-            className="amber"
-            onClick={() => setShowJsonPanel(true)}
-          >
+          <button className="amber" onClick={() => setShowJsonPanel(true)}>
             JSON ↗
           </button>
-
-          <button
-            className="red"
-            onClick={logout}
-            disabled={busy}
-          >
+          <button className="red" onClick={logout} disabled={busy}>
             LOGOUT
           </button>
         </div>
       </header>
 
       {showJsonPanel && (
-        <JsonPanel
-          onClose={() => setShowJsonPanel(false)}
-        />
+        <JsonPanel onClose={() => setShowJsonPanel(false)} />
       )}
 
       <nav>
@@ -981,14 +876,12 @@ export default function Dashboard({ maintenance }: DashboardProps) {
         >
           TERMINAL
         </button>
-
         <button
           className={tab === "files" ? "active" : ""}
           onClick={() => setTab("files")}
         >
           UPDATE / IMPORT
         </button>
-
         <button
           className={tab === "editor" ? "active" : ""}
           onClick={() => setTab("editor")}
@@ -1000,10 +893,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       {message && (
         <div className="notice">
           <span>{message}</span>
-
-          <button onClick={() => setMessage("")}>
-            ×
-          </button>
+          <button onClick={() => setMessage("")}>×</button>
         </div>
       )}
 
@@ -1028,163 +918,19 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             {cwd}
           </small>
 
-          {/* WEB PREVIEW PANEL */}
-          <div
-            style={{
-              background: "#101820",
-              border: "1px solid #293746",
-              borderRadius: 12,
-              padding: 14,
-              marginBottom: 14,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 10,
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <strong style={{ color: "#e5edf5" }}>
-                  WEB PREVIEW
-                </strong>
-
-                <div
-                  style={{
-                    color: "#8c9baa",
-                    fontSize: 12,
-                    marginTop: 4,
-                  }}
-                >
-                  AUTO PORT DETECTION
-                </div>
-              </div>
-
-              <button
-                type="button"
-                className="amber"
-                onClick={() => void refreshPreview()}
-                disabled={previewChecking}
-              >
-                {previewChecking
-                  ? "CHECKING..."
-                  : "REFRESH PORTS"}
-              </button>
-            </div>
-
-            {previewError && (
-              <p
-                style={{
-                  color: "#ff7777",
-                  fontSize: 12,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {previewError}
-              </p>
-            )}
-
-            {previewPorts.length === 0 ? (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: 12,
-                  background: "#17232e",
-                  borderRadius: 8,
-                  color: "#9daaba",
-                  fontSize: 13,
-                  lineHeight: 1.7,
-                }}
-              >
-                <strong style={{ color: "#dce5ee" }}>
-                  NO ACTIVE WEB SERVER
-                </strong>
-
-                <p style={{ margin: "6px 0 0" }}>
-                  Jalankan server web di terminal dengan host
-                  0.0.0.0. Port yang didukung akan muncul otomatis
-                  di sini.
-                </p>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 9,
-                  marginTop: 12,
-                }}
-              >
-                {previewPorts.map((item) => (
-                  <div
-                    key={item.port}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 10,
-                      flexWrap: "wrap",
-                      padding: 10,
-                      borderRadius: 8,
-                      background: "#17232e",
-                    }}
-                  >
-                    <div>
-                      <strong
-                        style={{ color: "#a7f3d0" }}
-                      >
-                        PORT {item.port}
-                      </strong>
-
-                      <div
-                        style={{
-                          color: "#8192a3",
-                          fontSize: 11,
-                          marginTop: 4,
-                        }}
-                      >
-                        SERVER DETECTED
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="lime"
-                      onClick={() =>
-                        window.open(
-                          item.url,
-                          "_blank",
-                          "noopener,noreferrer"
-                        )
-                      }
-                    >
-                      OPEN WEB PREVIEW ↗
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           <pre className="console">{output}</pre>
 
           <div className="command">
             <b>$</b>
-
             <input
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void run();
-                }
+                if (e.key === "Enter") void run();
               }}
               placeholder="Masukkan command Linux..."
               disabled={busy}
             />
-
             <button
               className="amber"
               disabled={busy || !command.trim()}
@@ -1195,52 +941,24 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           </div>
 
           <div className="actions">
-            <button
-              onClick={() => void run("pwd")}
-              disabled={busy}
-            >
-              PWD
-            </button>
-
-            <button
-              onClick={() => void run("ls -la")}
-              disabled={busy}
-            >
-              LIST FILES
-            </button>
-
-            <button onClick={copyOutput}>
-              COPY LOG
-            </button>
-
-            <button onClick={exportOutput}>
-              EXPORT JSON
-            </button>
-
-            <button
-              className="red"
-              onClick={clearTerminal}
-            >
-              CLEAR
-            </button>
+            <button onClick={() => void run("pwd")} disabled={busy}>PWD</button>
+            <button onClick={() => void run("ls -la")} disabled={busy}>LIST FILES</button>
+            <button onClick={copyOutput}>COPY LOG</button>
+            <button onClick={exportOutput}>EXPORT JSON</button>
+            <button className="red" onClick={clearTerminal}>CLEAR</button>
           </div>
 
           <p>
-            <small>
-              COMMAND EXECUTION / WORKSPACE ENVIRONMENT
-            </small>
+            <small>COMMAND EXECUTION / WORKSPACE ENVIRONMENT</small>
           </p>
         </section>
       )}
 
-      {/* UPDATE MANAGER - KEEP MOUNTED */}
-      <div
-        style={{
-          display: tab === "files" ? "block" : "none",
-        }}
-      >
+      {/* UPDATE MANAGER */}
+      <div style={{ display: tab === "files" ? "block" : "none" }}>
         <UpdateManager
           onContinue={() => setTab("terminal")}
+          onEditFile={(path) => void openFileFromPath(path)}
         />
       </div>
 
@@ -1248,7 +966,6 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       {tab === "editor" && (
         <section className="panel">
           <small>CODE EDITOR / SAVE ENABLED</small>
-
           <h2>{file || "SELECT A FILE"}</h2>
 
           {!file && (
@@ -1273,12 +990,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             >
               {busy ? "SAVING..." : "SAVE FILE"}
             </button>
-
-            <button
-              onClick={() => setTab("files")}
-            >
-              BACK TO FILES
-            </button>
+            <button onClick={() => setTab("files")}>BACK TO FILES</button>
           </div>
         </section>
       )}
