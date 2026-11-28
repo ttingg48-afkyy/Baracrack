@@ -19,114 +19,113 @@
   -webkit-user-drag: none;
 }
 
-/* KAKI: TETAP DIAM */
+/* KAKI — NAIK AGAR MENEMPEL KE ROK */
 .leg-left {
-  width: 24%;
-  height: 22%;
+  width: 25%;
+  height: 24%;
   left: 27%;
-  bottom: 0;
-  z-index: 1;
+  bottom: 3%;
+  z-index: 2;
 }
 
 .leg-right {
-  width: 24%;
-  height: 22%;
+  width: 25%;
+  height: 24%;
   right: 27%;
-  bottom: 0;
-  z-index: 1;
-}
-
-/* BADAN */
-.body {
-  width: 47%;
-  height: 40%;
-  left: 26.5%;
-  top: 39%;
+  bottom: 3%;
   z-index: 2;
-  transform-origin: 50% 15%;
-  animation: body-idle 2s ease-in-out infinite;
 }
 
-/* TANGAN KIRI */
+/* BADAN — LAPISAN TENGAH */
+.body {
+  width: 53%;
+  height: 43%;
+  left: 23.5%;
+  top: 36%;
+  z-index: 3;
+  transform-origin: 50% 15%;
+  animation: body-idle 2.5s ease-in-out infinite;
+}
+
+/* TANGAN KIRI — MASUK KE BAHU */
 .arm-left {
   width: 34%;
-  height: 32%;
-  left: 1%;
-  top: 39%;
+  height: 34%;
+  left: 5%;
+  top: 37%;
   z-index: 4;
   transform-origin: 88% 25%;
-  animation: left-wave 1s ease-in-out infinite;
+  animation: left-wave 1.2s ease-in-out infinite;
 }
 
-/* TANGAN KANAN */
+/* TANGAN KANAN — MASUK KE BAHU */
 .arm-right {
   width: 34%;
-  height: 32%;
-  right: 1%;
-  top: 39%;
+  height: 34%;
+  right: 5%;
+  top: 37%;
   z-index: 4;
   transform-origin: 12% 25%;
-  animation: right-move 1.25s ease-in-out infinite;
+  animation: right-move 1.4s ease-in-out infinite;
 }
 
-/* KEPALA */
+/* KEPALA — TURUNKAN KE LEHER */
 .head {
-  width: 49%;
-  height: 32%;
-  left: 25.5%;
-  top: 3%;
+  width: 51%;
+  height: 34%;
+  left: 24.5%;
+  top: 10%;
   z-index: 5;
   transform-origin: 50% 90%;
-  animation: head-idle 2.5s ease-in-out infinite;
+  animation: head-idle 2.8s ease-in-out infinite;
 }
 
-/* GERAKAN BADAN */
+/* BADAN BERNAFAS HALUS */
 @keyframes body-idle {
   0%, 100% {
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-5px);
+    transform: translateY(-2px);
   }
 }
 
-/* GERAKAN KEPALA */
+/* KEPALA MENGANGGUK */
 @keyframes head-idle {
   0%, 100% {
-    transform: rotate(-2deg) translateY(0);
+    transform: rotate(-1deg) translateY(0);
   }
   50% {
-    transform: rotate(3deg) translateY(-5px);
+    transform: rotate(1.5deg) translateY(-2px);
   }
 }
 
 /* TANGAN KIRI MELAMBAI */
 @keyframes left-wave {
   0%, 100% {
-    transform: rotate(-10deg);
+    transform: rotate(-5deg);
   }
   25% {
-    transform: rotate(23deg);
+    transform: rotate(13deg);
   }
   50% {
-    transform: rotate(-4deg);
+    transform: rotate(-3deg);
   }
   75% {
-    transform: rotate(22deg);
+    transform: rotate(15deg);
   }
 }
 
-/* TANGAN KANAN */
+/* TANGAN KANAN BERGERAK */
 @keyframes right-move {
   0%, 100% {
-    transform: rotate(5deg);
+    transform: rotate(4deg);
   }
   50% {
-    transform: rotate(-15deg) translateY(-5px);
+    transform: rotate(-10deg);
   }
 }
 
-/* MOBILE */
 @media (max-width: 480px) {
   .bara-character {
     width: 270px;
