@@ -28,15 +28,45 @@ function validRelativePath(value: string) {
     !normalized ||
     normalized.startsWith("/") ||
     normalized.includes("\0") ||
-    parts.some((part) =>
-      !part || part === "." || part === ".." ||
-      !/^[a-zA-Z0-9._ @()+-]+$/.test(part)
+    parts.some(
+      (part) =>
+        !part ||
+        part === "." ||
+        part === ".." ||
+        !/^[a-zA-Z0-9._ @()+-]+$/.test(part)
     )
   ) {
     throw new Error("Nama atau lokasi file tidak valid.");
   }
 
   return parts.join("/");
+}
+
+async function ensureDirectory(sbx: any, directory: string) {
+  const parts = directory.split("/").filter(Boolean);
+  let current = "";
+
+  for (const part of parts) {
+    current += "/" + part;
+
+    try {
+      await sbx.mkDir(current);
+    } catch (error: any) {
+      // Abaikan hanya jika folder memang sudah tersedia.
+      const check = await sbx.runCommand({
+        cmd: "test",
+        args: ["-d", current],
+      });
+
+      if (check.exitCode !== 0) {
+        throw new Error(
+          `Gagal membuat folder ${current}: ${
+            error?.message || "Folder tidak tersedia."
+          }`
+        );
+      }
+    }
+  }
 }
 
 export async function POST(req: Request) {
@@ -48,6 +78,7 @@ export async function POST(req: Request) {
 
     const uploaded = form.get("file");
     const folder = String(form.get("folder") || "").trim();
+
     const relativePath = validRelativePath(
       String(form.get("relativePath") || "")
     );
@@ -87,10 +118,10 @@ export async function POST(req: Request) {
 
     const sbx = await userSandbox(user.id);
 
-    // Pastikan folder induk tersedia.
-    await sbx.mkDir(parent);
+    // Buat direktori secara bertahap agar parent tidak hilang.
+    await ensureDirectory(sbx, parent);
 
-    // Tulis bytes asli agar PNG, JPG, ZIP, dan file biner tetap utuh.
+    // Simpan isi file tanpa mengubah bytes.
     await sbx.writeFiles([
       {
         path: destination,
@@ -113,4 +144,3 @@ export async function POST(req: Request) {
     );
   }
 }
-  
