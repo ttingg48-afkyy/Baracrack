@@ -26,29 +26,21 @@ type ControlCommand = {
   duration?: string;
 };
 
-function parseControlCommand(
-  command: string
-): ControlCommand | null {
+function parseControlCommand(command: string): ControlCommand | null {
   const parts = command.trim().split(/\s+/);
 
-  // Perintah harus diawali slash, misalnya /ban.
   const match = parts[0]?.match(
     /^\/(ban|unban|jail|unjail|mute|unmute)$/i
   );
 
-  // Perintah Linux biasa diteruskan ke Bash.
   if (!match) return null;
 
   const action = match[1].toLowerCase() as ControlAction;
 
-  if (parts.length < 2) {
+  if (parts.length < 2 || parts.length > 3) {
     throw new Error(
-      `Format: /${action} email@gmail.com`
+      `Format: /${action} email@gmail.com${action === "ban" || action === "jail" ? " 77h atau permanent" : ""}`
     );
-  }
-
-  if (parts.length > 3) {
-    throw new Error("Format perintah tidak valid.");
   }
 
   const email = parts[1].trim().toLowerCase();
@@ -58,23 +50,23 @@ function parseControlCommand(
     throw new Error("Format email tidak valid.");
   }
 
-  if (action === "ban" || action === "jail") {
-    if (!duration) {
-      throw new Error(
-        `Format: /${action} email@gmail.com 77h atau permanent`
-      );
-    }
-  } else if (duration) {
+  if (
+    (action === "ban" || action === "jail") &&
+    !duration
+  ) {
     throw new Error(
-      `Format: /${action} email@gmail.com`
+      `Format: /${action} email@gmail.com 77h atau permanent`
     );
   }
 
-  return {
-    action,
-    email,
-    duration,
-  };
+  if (
+    !["ban", "jail"].includes(action) &&
+    duration
+  ) {
+    throw new Error(`Format: /${action} email@gmail.com`);
+  }
+
+  return { action, email, duration };
 }
 
 export async function POST(req: Request) {
@@ -98,10 +90,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Periksa perintah admin sebelum menjalankan Bash.
     const control = parseControlCommand(command);
 
-    if (control !== null) {
+    if (control) {
       if (!(await hasPanelSession())) {
         throw new Error("PANEL_PIN_REQUIRED");
       }
@@ -123,7 +114,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // Pemeriksaan akun pengguna biasa.
     await assertAccountAccess(user.email || "");
     await assertNotMuted(user.email || "");
 
@@ -133,7 +123,7 @@ export async function POST(req: Request) {
       cmd: "bash",
       args: [
         "-lc",
-        "cd /vercel/sandbox && " + command,
+        `cd /home/barateriminal && ${command}`,
       ],
       timeoutMs: 50000,
     });
@@ -162,21 +152,18 @@ export async function POST(req: Request) {
 
     let status = 500;
 
-    if (error?.message === "UNAUTHORIZED") {
-      status = 401;
-    } else if (
-      error?.message === "ACCOUNT_BANNED" ||
-      error?.message === "ACCOUNT_JAILED" ||
-      error?.message === "ACCOUNT_MUTED"
+    if (error?.message === "UNAUTHORIZED") status = 401;
+
+    if (
+      ["ACCOUNT_BANNED", "ACCOUNT_JAILED", "ACCOUNT_MUTED"].includes(
+        error?.message
+      )
     ) {
       status = 403;
-    } else if (error?.message === "PANEL_PIN_REQUIRED") {
-      status = 401;
     }
 
-    return NextResponse.json(
-      { error: message },
-      { status }
-    );
+    if (error?.message === "PANEL_PIN_REQUIRED") status = 401;
+
+    return NextResponse.json({ error: message }, { status });
   }
 }
