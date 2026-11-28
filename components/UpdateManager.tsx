@@ -3,145 +3,138 @@
 
 import { useRef, useState } from "react";
 
-type UploadMode = "file" | "folder";
+type Mode = "file" | "folder";
+
+type ImportedItem = {
+  name: string;
+  path: string;
+  size: number;
+};
 
 export default function UpdateManager() {
-  const fileInput = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const [mode, setMode] = useState<UploadMode>("file");
+  const [mode, setMode] = useState<Mode>("folder");
   const [files, setFiles] = useState<File[]>([]);
-  const [folderName, setFolderName] = useState("my-project");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState("");
+  const [result, setResult] = useState<ImportedItem[] | null>(null);
+  const [destination, setDestination] = useState("");
 
   const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-  const formatSize = (size: number) => {
+
+  function formatSize(size: number) {
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / 1024 / 1024).toFixed(2)} MB`;
-  };
+  }
 
-  function chooseMode(next: UploadMode) {
+  function selectMode(next: Mode) {
     if (busy) return;
     setMode(next);
     setFiles([]);
     setMessage("");
-    if (fileInput.current) fileInput.current.value = "";
+    if (inputRef.current) inputRef.current.value = "";
   }
 
-  function onFilesSelected(list: FileList | null) {
+  function selectFiles(list: FileList | null) {
     if (!list) return;
 
     const selected = Array.from(list);
 
     if (!selected.length) {
-      setMessage("Tidak ada file yang dipilih.");
+      setMessage("Tidak ada file dipilih.");
       return;
     }
 
     if (selected.length > 500) {
-      setMessage("Maksimal 500 file dalam satu proses.");
+      setMessage("Maksimal 500 file.");
       return;
     }
 
-    const tooLarge = selected.find((file) => file.size > 4 * 1024 * 1024);
+    const tooLarge = selected.find(
+      (file) => file.size > 4 * 1024 * 1024
+    );
 
     if (tooLarge) {
-      setMessage(
-        `File ${tooLarge.name} lebih dari 4 MB. Pilih file yang lebih kecil.`
-      );
+      setMessage(`${tooLarge.name} melebihi batas 4 MB.`);
       return;
     }
 
     const total = selected.reduce((sum, file) => sum + file.size, 0);
 
     if (total > 40 * 1024 * 1024) {
-      setMessage("Total upload maksimal 40 MB per proses.");
+      setMessage("Total ukuran maksimal 40 MB.");
       return;
+    }
+
+    if (mode === "folder") {
+      const roots = new Set(
+        selected.map((file) =>
+          file.webkitRelativePath.split("/")[0]
+        )
+      );
+
+      if (roots.size !== 1 || ![...roots][0]) {
+        setMessage("Pilih tepat satu folder project.");
+        return;
+      }
     }
 
     setFiles(selected);
     setProgress(0);
-    setMessage(`${selected.length} file siap diperiksa.`);
+    setMessage(`${selected.length} file siap diimport.`);
   }
 
-  function relativeName(file: File) {
-    if (mode === "folder" && file.webkitRelativePath) {
-      const parts = file.webkitRelativePath.split("/");
-      return parts.slice(1).join("/") || file.name;
+  function getRelativePath(file: File) {
+    if (mode === "folder") {
+      return file.webkitRelativePath;
     }
 
     return file.name;
   }
 
-  function safeFolderName(value: string) {
-    return /^[a-zA-Z0-9._-]+$/.test(value) &&
-      value !== "." &&
-      value !== "..";
-  }
+  async function importFiles() {
+    if (busy || !files.length) return;
 
-  async function continueUpload() {
-    if (busy || files.length === 0) return;
+    const firstPath = getRelativePath(files[0]);
+    const rootName =
+      mode === "folder"
+        ? firstPath.split("/")[0]
+        : "";
 
-    const folder = folderName.trim();
-
-    if (!safeFolderName(folder)) {
-      setMessage(
-        "Nama folder hanya boleh berisi huruf, angka, titik, garis, dan underscore."
-      );
-      return;
-    }
-
-    const duplicateCheck = new Set<string>();
-
-    for (const file of files) {
-      const relative = relativeName(file);
-
-      if (
-        !relative ||
-        relative.startsWith("/") ||
-        relative.split("/").some((part) =>
-          !part || part === "." || part === ".."
-        )
-      ) {
-        setMessage("Struktur folder tidak valid.");
-        return;
-      }
-
-      if (duplicateCheck.has(relative)) {
-        setMessage(`File duplikat: ${relative}`);
-        return;
-      }
-
-      duplicateCheck.add(relative);
-    }
+    const target =
+      mode === "folder"
+        ? `/home/barateriminal/${rootName}/`
+        : `/home/barateriminal/`;
 
     const confirmed = window.confirm(
-      `Upload ${files.length} file ke /home/barateriminal/${folder}/ ?`
+      `Import ${files.length} file ke:\n${target}`
     );
 
     if (!confirmed) return;
 
     setBusy(true);
     setProgress(0);
-    setMessage("Memulai upload...");
+    setMessage("Memulai import...");
 
-    let completed = 0;
+    const imported: ImportedItem[] = [];
 
     try {
-      for (const file of files) {
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index];
         const form = new FormData();
 
         form.append("file", file, file.name);
-        form.append("folder", folder);
-        form.append("relativePath", relativeName(file));
+        form.append("mode", mode);
+        form.append("relativePath", getRelativePath(file));
 
         const response = await fetch("/api/update", {
           method: "POST",
           credentials: "same-origin",
-          body: form,
           cache: "no-store",
+          body: form,
         });
 
         const raw = await response.text();
@@ -154,117 +147,156 @@ export default function UpdateManager() {
         }
 
         if (!response.ok) {
-          throw new Error(
-            data.error || `Upload gagal: ${relativeName(file)}`
-          );
+          throw new Error(data.error || `Gagal import ${file.name}`);
         }
 
-        completed++;
-        setProgress(Math.round((completed / files.length) * 100));
-        setMessage(`Uploading ${completed}/${files.length}`);
+        imported.push({
+          name: data.name,
+          path: data.path,
+          size: data.size,
+        });
+
+        setProgress(
+          Math.round(((index + 1) / files.length) * 100)
+        );
+        setMessage(`Import ${index + 1}/${files.length}`);
       }
 
-      setMessage(
-        `UPDATE BERHASIL! ${completed} file tersimpan di /home/barateriminal/${folder}/`
-      );
+      setDestination(target);
+      setResult(imported);
       setFiles([]);
-      if (fileInput.current) fileInput.current.value = "";
+      setMessage("");
+      if (inputRef.current) inputRef.current.value = "";
     } catch (error: any) {
       setMessage(
-        `${error.message || "Upload gagal."} Berhasil diunggah: ${completed}/${files.length}. File yang sudah berhasil tetap tersimpan.`
+        `${error.message || "Import gagal."} Berhasil: ${imported.length}/${files.length}.`
       );
     } finally {
       setBusy(false);
     }
   }
 
+  if (result) {
+    return (
+      <section className="panel">
+        <small>BARA TERMINAL / IMPORT COMPLETE</small>
+        <h2>PROJECT IMPORTED</h2>
+
+        <div className="notice">
+          <b>DESTINATION</b>
+          <br />
+          {destination}
+          <br />
+          <b>{result.length} FILE BERHASIL DIIMPORT</b>
+        </div>
+
+        <h3>IMPORTED CONTENT</h3>
+
+        <div className="fileList">
+          {result.map((item, index) => (
+            <div className="fileRow" key={`${item.path}-${index}`}>
+              <span style={{ overflowWrap: "anywhere" }}>
+                📄 {item.path.replace(destination, "") || item.name}
+              </span>
+              <small>{formatSize(item.size)}</small>
+            </div>
+          ))}
+        </div>
+
+        <button
+          className="lime"
+          style={{ width: "100%", marginTop: 14 }}
+          onClick={() => {
+            setResult(null);
+            setDestination("");
+            setMessage("");
+          }}
+        >
+          IMPORT LAGI
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
       <small>BARA TERMINAL / PROJECT IMPORT</small>
-      <h2>UPDATE MANAGER</h2>
-      <p>Pilih satu file atau satu folder untuk dimasukkan ke workspace.</p>
+      <h2>UPDATE / IMPORT</h2>
+      <p>
+        Import satu file langsung ke workspace atau import satu folder
+        project beserta seluruh isinya.
+      </p>
 
       <div className="actions">
         <button
           className={mode === "file" ? "lime" : ""}
           disabled={busy}
-          onClick={() => chooseMode("file")}
+          onClick={() => selectMode("file")}
         >
-          UPDATE 1 FILE
+          IMPORT 1 FILE
         </button>
 
         <button
           className={mode === "folder" ? "lime" : ""}
           disabled={busy}
-          onClick={() => chooseMode("folder")}
+          onClick={() => selectMode("folder")}
         >
-          UPDATE 1 FOLDER
+          IMPORT 1 FOLDER
         </button>
       </div>
 
-      <label>NAMA FOLDER TUJUAN</label>
-      <input
-        value={folderName}
-        onChange={(event) => setFolderName(event.target.value)}
-        placeholder="my-project"
-        disabled={busy}
-      />
-
       <div className="notice">
-        <b>DESTINATION</b>
+        <b>TARGET OTOMATIS</b>
         <br />
-        /home/barateriminal/{folderName || "<nama-folder>"}/
+        {mode === "file"
+          ? "/home/barateriminal/"
+          : "/home/barateriminal/<nama-folder-pilihan>/"}
       </div>
 
       <input
-        ref={fileInput}
+        ref={inputRef}
         type="file"
         hidden
         multiple={mode === "folder"}
         {...(mode === "folder"
           ? ({ webkitdirectory: "", directory: "" } as any)
           : {})}
-        onChange={(event) => onFilesSelected(event.target.files)}
+        onChange={(event) => selectFiles(event.target.files)}
       />
 
       <button
         className="amber"
         style={{ width: "100%", marginTop: 12 }}
         disabled={busy}
-        onClick={() => fileInput.current?.click()}
+        onClick={() => inputRef.current?.click()}
       >
-        {mode === "file" ? "SELECT FILE" : "SELECT FOLDER"}
+        {mode === "file" ? "PILIH FILE" : "PILIH FOLDER PROJECT"}
       </button>
 
-      <div className="panel">
-        <small>PREVIEW / BELUM DIUPLOAD</small>
-        <h3>SELECTED CONTENT</h3>
+      {files.length > 0 && (
+        <>
+          <div className="notice">
+            {files.length} file · {formatSize(totalSize)}
+          </div>
 
-        {files.length === 0 ? (
-          <p>Belum ada file dipilih.</p>
-        ) : (
-          <>
-            <div className="notice">
-              {files.length} file · {formatSize(totalSize)}
-            </div>
+          <h3>PREVIEW CONTENT</h3>
 
-            <div className="fileList">
-              {files.map((file, index) => (
-                <div className="fileRow" key={`${file.name}-${index}`}>
-                  <span style={{ overflowWrap: "anywhere" }}>
-                    📄 {relativeName(file)}
-                  </span>
-                  <small>{formatSize(file.size)}</small>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+          <div className="fileList">
+            {files.map((file, index) => (
+              <div className="fileRow" key={`${file.name}-${index}`}>
+                <span style={{ overflowWrap: "anywhere" }}>
+                  📄 {getRelativePath(file)}
+                </span>
+                <small>{formatSize(file.size)}</small>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {busy && (
         <div className="notice">
-          <b>UPLOAD PROGRESS: {progress}%</b>
+          IMPORT PROGRESS: {progress}%
           <div
             style={{
               height: 8,
@@ -292,19 +324,16 @@ export default function UpdateManager() {
         className="lime"
         style={{ width: "100%", marginTop: 12 }}
         disabled={busy || files.length === 0}
-        onClick={() => void continueUpload()}
+        onClick={() => void importFiles()}
       >
-        {busy ? "UPLOADING..." : "CONTINUE — UPLOAD TO BARA"}
+        {busy ? "IMPORTING..." : "CONTINUE — IMPORT"}
       </button>
 
       <p>
         <small>
-          Maksimal 500 file dan 40 MB per proses. Maksimal 4 MB per file.
-          File yang sudah berhasil diunggah tidak otomatis dihapus jika
-          upload berikutnya gagal.
+          Maksimal 500 file, total 40 MB, dan 4 MB per file.
         </small>
       </p>
     </section>
   );
-      }
-        
+}
