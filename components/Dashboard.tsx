@@ -8,13 +8,15 @@ import UpdateManager from "@/components/UpdateManager";
 
 type Tab = "terminal" | "files" | "editor";
 
+type MaintenanceState = {
+  enabled: boolean;
+  message: string;
+  duration_label: string | null;
+  expires_at: string | null;
+};
+
 type DashboardProps = {
-  maintenance: {
-    enabled: boolean;
-    message: string;
-    duration_label: string | null;
-    expires_at: string | null;
-  };
+  maintenance: MaintenanceState;
 };
 
 export default function Dashboard({ maintenance }: DashboardProps) {
@@ -47,6 +49,14 @@ export default function Dashboard({ maintenance }: DashboardProps) {
   const [file, setFile] = useState("");
   const [content, setContent] = useState("");
 
+  // MAINTENANCE LIVE STATE
+  const [maintenanceState, setMaintenanceState] =
+    useState<MaintenanceState>(maintenance);
+
+  // TERMINAL CURRENT DIRECTORY
+  const [cwd, setCwd] = useState("/home/barateriminal");
+
+  // API HELPER
   const api = useCallback(
     async (url: string, options?: RequestInit) => {
       const response = await fetch(url, {
@@ -66,7 +76,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       if (!response.ok) {
         throw new Error(
-          data.error || `Request gagal (${response.status}).`
+          data.error ||
+            data.stderr ||
+            `Request gagal (${response.status}).`
         );
       }
 
@@ -75,7 +87,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     []
   );
 
-  // SESSION
+  // =====================================
+  // AUTH SESSION
+  // =====================================
+
   useEffect(() => {
     let active = true;
 
@@ -98,7 +113,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) setUser(session?.user || null);
+      if (active) {
+        setUser(session?.user || null);
+      }
     });
 
     return () => {
@@ -107,7 +124,53 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     };
   }, [supabase]);
 
-  // SWITCH AUTH MODE
+  // =====================================
+  // LIVE MAINTENANCE CHECK
+  // =====================================
+
+  useEffect(() => {
+    let active = true;
+
+    async function checkMaintenance() {
+      try {
+        const response = await fetch("/api/maintenance", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        if (
+          active &&
+          typeof data.enabled === "boolean"
+        ) {
+          setMaintenanceState(data);
+        }
+      } catch {
+        // Akan mencoba kembali pada interval berikutnya.
+      }
+    }
+
+    void checkMaintenance();
+
+    const timer = window.setInterval(
+      checkMaintenance,
+      2000
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  // =====================================
+  // AUTH MODE
+  // =====================================
+
   function switchMode(next: "login" | "signup") {
     setMode(next);
     setCodeSent(false);
@@ -115,7 +178,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     setMessage("");
   }
 
-  // SEND GMAIL OTP
+  // =====================================
+  // REGISTER / SEND OTP
+  // =====================================
+
   async function sendCode() {
     if (busy) return;
 
@@ -126,7 +192,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       const normalizedEmail = email.trim().toLowerCase();
 
       if (!/^[a-z0-9._%+-]+@gmail\.com$/i.test(normalizedEmail)) {
-        throw new Error("Registrasi hanya menerima alamat Gmail.");
+        throw new Error(
+          "Registrasi hanya menerima alamat Gmail."
+        );
       }
 
       if (password.length < 8) {
@@ -135,7 +203,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       const data = await api("/api/auth", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           action: "send-code",
           email: normalizedEmail,
@@ -145,8 +215,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       setEmail(normalizedEmail);
       setCodeSent(true);
+
       setMessage(
-        data.message || "Kode OTP berhasil dikirim melalui Gmail."
+        data.message ||
+          "Kode OTP berhasil dikirim melalui Gmail."
       );
     } catch (error: any) {
       setMessage(error.message || "Gagal mengirim OTP.");
@@ -155,7 +227,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // VERIFY OTP
+  // =====================================
+
   async function verifyCode() {
     if (busy) return;
 
@@ -171,7 +246,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       await api("/api/auth", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           action: "verify-code",
           email: normalizedEmail,
@@ -188,7 +265,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error("Verifikasi berhasil, tetapi login gagal.");
+        throw new Error(
+          "Verifikasi berhasil, tetapi login gagal."
+        );
       }
 
       setUser(data.user);
@@ -201,7 +280,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // LOGIN
+  // =====================================
+
   async function login() {
     if (busy) return;
 
@@ -221,7 +303,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
       await api("/api/auth", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           action: "login",
           email: normalizedEmail,
@@ -234,7 +318,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       if (error) throw error;
 
       if (!data.user) {
-        throw new Error("Session belum terbentuk. Coba login lagi.");
+        throw new Error(
+          "Session belum terbentuk. Coba login lagi."
+        );
       }
 
       setUser(data.user);
@@ -246,7 +332,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // LOGOUT
+  // =====================================
+
   async function logout() {
     if (busy) return;
 
@@ -257,8 +346,12 @@ export default function Dashboard({ maintenance }: DashboardProps) {
         await fetch("/api/control", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "lock" }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "lock",
+          }),
         });
       } catch {
         // Tetap lanjut logout.
@@ -272,10 +365,13 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       setShowJsonPanel(false);
       setTab("terminal");
       setCommand("");
-      setOutput("BARA TERMINAL V4.0\nSession ended.\n");
+      setOutput(
+        "BARA TERMINAL V4.0\nSession ended.\n"
+      );
       setFile("");
       setContent("");
       setMessage("");
+      setCwd("/home/barateriminal");
     } catch (error: any) {
       setMessage(error.message || "Logout gagal.");
     } finally {
@@ -283,7 +379,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // TERMINAL
+  // =====================================
+
   async function run(cmd = command) {
     const selected = cmd.trim();
 
@@ -294,7 +393,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
     setOutput((previous) => {
       const separator =
-        previous && !previous.endsWith("\n") ? "\n" : "";
+        previous && !previous.endsWith("\n")
+          ? "\n"
+          : "";
 
       return previous + separator + `$ ${selected}\n`;
     });
@@ -302,20 +403,37 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     try {
       const data = await api("/api/terminal", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: selected }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          command: selected,
+          cwd,
+        }),
       });
 
+      if (data.cwd) {
+        setCwd(data.cwd);
+      }
+
+      if (data.maintenance) {
+        setMaintenanceState(data.maintenance);
+      }
+
+      const stdout = data.stdout || "";
+      const stderr = data.stderr || "";
+
       const result =
-        (data.stdout || "") +
-        (data.stderr || "") +
+        (stdout ? stdout : "") +
+        (stderr ? stderr : "") +
         `\n[exit ${data.exitCode ?? "unknown"}]\n`;
 
       setOutput((previous) => previous + result);
     } catch (error: any) {
       setOutput(
         (previous) =>
-          previous + `ERROR: ${error.message || "Command gagal."}\n`
+          previous +
+          `ERROR: ${error.message || "Command gagal."}\n`
       );
     } finally {
       setBusy(false);
@@ -348,7 +466,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           2
         ),
       ],
-      { type: "application/json" }
+      {
+        type: "application/json",
+      }
     );
 
     const url = URL.createObjectURL(blob);
@@ -361,7 +481,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     URL.revokeObjectURL(url);
   }
 
+  // =====================================
   // OPEN EDITOR
+  // =====================================
+
   async function openFileFromPath(target: string) {
     if (busy) return;
 
@@ -370,15 +493,22 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     try {
       const data = await api("/api/files", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           action: "read",
           path: target,
         }),
       });
 
-      if (data.exitCode !== undefined && data.exitCode !== 0) {
-        throw new Error(data.stderr || "File tidak bisa dibuka.");
+      if (
+        data.exitCode !== undefined &&
+        data.exitCode !== 0
+      ) {
+        throw new Error(
+          data.stderr || "File tidak bisa dibuka."
+        );
       }
 
       setFile(target);
@@ -391,7 +521,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // SAVE EDITOR
+  // =====================================
+
   async function saveFile() {
     if (!file || busy) return;
 
@@ -400,7 +533,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     try {
       await api("/api/files", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           action: "write",
           path: file,
@@ -416,10 +551,15 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     }
   }
 
+  // =====================================
   // GLOBAL MAINTENANCE SCREEN
-  if (maintenance.enabled) {
-    const expiryText = maintenance.expires_at
-      ? new Date(maintenance.expires_at).toLocaleString("id-ID", {
+  // =====================================
+
+  if (maintenanceState.enabled) {
+    const expiryText = maintenanceState.expires_at
+      ? new Date(
+          maintenanceState.expires_at
+        ).toLocaleString("id-ID", {
           dateStyle: "long",
           timeStyle: "medium",
           timeZone: "Asia/Jakarta",
@@ -495,7 +635,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               overflowWrap: "anywhere",
             }}
           >
-            {maintenance.message}
+            {maintenanceState.message}
           </p>
 
           <div
@@ -519,7 +659,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
                 fontWeight: 800,
               }}
             >
-              {maintenance.duration_label || "ACTIVE"}
+              {maintenanceState.duration_label || "ACTIVE"}
             </div>
           </div>
 
@@ -547,7 +687,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           >
             ESTIMATED END
             <br />
-            <b style={{ color: "#c7d0da" }}>{expiryText}</b>
+            <b style={{ color: "#c7d0da" }}>
+              {expiryText}
+            </b>
           </div>
 
           <div
@@ -565,7 +707,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     );
   }
 
+  // =====================================
   // LOADING
+  // =====================================
+
   if (loading) {
     return (
       <main className="auth">
@@ -578,13 +723,19 @@ export default function Dashboard({ maintenance }: DashboardProps) {
     );
   }
 
+  // =====================================
   // AUTH SCREEN
+  // =====================================
+
   if (!user) {
     return (
       <main className="auth">
         <section className="authCard">
           <small>BARA ACCOUNT SYSTEM / V4.0</small>
-          <span className="pill">SECURE ACCESS</span>
+
+          <span className="pill">
+            SECURE ACCESS
+          </span>
 
           <h1>BARA TERMINAL</h1>
 
@@ -613,6 +764,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           {!codeSent && (
             <>
               <label>EMAIL ADDRESS</label>
+
               <input
                 type="email"
                 placeholder="nama@gmail.com"
@@ -623,6 +775,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               />
 
               <label>PASSWORD</label>
+
               <input
                 type="password"
                 placeholder="Minimal 8 karakter"
@@ -641,22 +794,32 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           {mode === "login" && (
             <button
               className="lime"
-              style={{ display: "block", width: "100%" }}
+              style={{
+                display: "block",
+                width: "100%",
+              }}
               disabled={busy}
               onClick={login}
             >
-              {busy ? "SIGNING IN..." : "LOGIN TO WORKSPACE →"}
+              {busy
+                ? "SIGNING IN..."
+                : "LOGIN TO WORKSPACE →"}
             </button>
           )}
 
           {mode === "signup" && !codeSent && (
             <button
               className="lime"
-              style={{ display: "block", width: "100%" }}
+              style={{
+                display: "block",
+                width: "100%",
+              }}
               disabled={busy}
               onClick={sendCode}
             >
-              {busy ? "SENDING CODE..." : "SEND VERIFICATION CODE →"}
+              {busy
+                ? "SENDING CODE..."
+                : "SEND VERIFICATION CODE →"}
             </button>
           )}
 
@@ -665,6 +828,7 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               <div className="otpHeading">
                 <small>EMAIL VERIFICATION</small>
                 <h2>CHECK YOUR GMAIL</h2>
+
                 <p>
                   Kode verifikasi dikirim ke:
                   <br />
@@ -683,7 +847,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
                 value={code}
                 onChange={(e) =>
                   setCode(
-                    e.target.value.replace(/\D/g, "").slice(0, 6)
+                    e.target.value
+                      .replace(/\D/g, "")
+                      .slice(0, 6)
                   )
                 }
                 disabled={busy}
@@ -691,11 +857,16 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
               <button
                 className="lime"
-                style={{ display: "block", width: "100%" }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                }}
                 disabled={busy || code.length !== 6}
                 onClick={verifyCode}
               >
-                {busy ? "VERIFYING..." : "VERIFY & CONTINUE →"}
+                {busy
+                  ? "VERIFYING..."
+                  : "VERIFY & CONTINUE →"}
               </button>
 
               <button
@@ -712,7 +883,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             </>
           )}
 
-          {message && <div className="notice">{message}</div>}
+          {message && (
+            <div className="notice">{message}</div>
+          )}
 
           <p>
             {mode === "signup"
@@ -720,21 +893,29 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               : "Masuk menggunakan Gmail dan password akun."}
           </p>
 
-          <footer>BARA TERMINAL · ACCOUNT SYSTEM</footer>
+          <footer>
+            BARA TERMINAL · ACCOUNT SYSTEM
+          </footer>
         </section>
       </main>
     );
   }
 
+  // =====================================
   // DASHBOARD
+  // =====================================
+
   return (
     <main className="shell">
       <header>
         <div>
           <small>LIVE CONSOLE / AUTHENTICATED</small>
+
           <h1>
-            BARA TERMINAL <span className="pill">SAFE MODE</span>
+            BARA TERMINAL{" "}
+            <span className="pill">SAFE MODE</span>
           </h1>
+
           <p>{user.email}</p>
         </div>
 
@@ -746,14 +927,20 @@ export default function Dashboard({ maintenance }: DashboardProps) {
             JSON ↗
           </button>
 
-          <button className="red" onClick={logout} disabled={busy}>
+          <button
+            className="red"
+            onClick={logout}
+            disabled={busy}
+          >
             LOGOUT
           </button>
         </div>
       </header>
 
       {showJsonPanel && (
-        <JsonPanel onClose={() => setShowJsonPanel(false)} />
+        <JsonPanel
+          onClose={() => setShowJsonPanel(false)}
+        />
       )}
 
       <nav>
@@ -782,7 +969,10 @@ export default function Dashboard({ maintenance }: DashboardProps) {
       {message && (
         <div className="notice">
           <span>{message}</span>
-          <button onClick={() => setMessage("")}>×</button>
+
+          <button onClick={() => setMessage("")}>
+            ×
+          </button>
         </div>
       )}
 
@@ -796,6 +986,17 @@ export default function Dashboard({ maintenance }: DashboardProps) {
 
           <h2>LIVE CONSOLE</h2>
 
+          <small
+            style={{
+              display: "block",
+              color: "#9daaba",
+              marginBottom: 10,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {cwd}
+          </small>
+
           <pre className="console">{output}</pre>
 
           <div className="command">
@@ -805,7 +1006,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void run();
+                if (e.key === "Enter") {
+                  void run();
+                }
               }}
               placeholder="Masukkan command Linux..."
               disabled={busy}
@@ -821,35 +1024,60 @@ export default function Dashboard({ maintenance }: DashboardProps) {
           </div>
 
           <div className="actions">
-            <button onClick={() => void run("pwd")} disabled={busy}>
+            <button
+              onClick={() => void run("pwd")}
+              disabled={busy}
+            >
               PWD
             </button>
 
-            <button onClick={() => void run("ls -la")} disabled={busy}>
+            <button
+              onClick={() => void run("ls -la")}
+              disabled={busy}
+            >
               LIST FILES
             </button>
 
-            <button onClick={copyOutput}>COPY LOG</button>
-            <button onClick={exportOutput}>EXPORT JSON</button>
+            <button onClick={copyOutput}>
+              COPY LOG
+            </button>
 
-            <button className="red" onClick={clearTerminal}>
+            <button onClick={exportOutput}>
+              EXPORT JSON
+            </button>
+
+            <button
+              className="red"
+              onClick={clearTerminal}
+            >
               CLEAR
             </button>
           </div>
 
           <p>
-            <small>COMMAND EXECUTION / WORKSPACE ENVIRONMENT</small>
+            <small>
+              COMMAND EXECUTION / WORKSPACE ENVIRONMENT
+            </small>
           </p>
         </section>
       )}
 
-      {/* UPDATE / IMPORT */}
-      {tab === "files" && <UpdateManager />}
+      {/* UPDATE MANAGER - KEEP MOUNTED */}
+      <div
+        style={{
+          display: tab === "files" ? "block" : "none",
+        }}
+      >
+        <UpdateManager
+          onContinue={() => setTab("terminal")}
+        />
+      </div>
 
       {/* EDITOR */}
       {tab === "editor" && (
         <section className="panel">
           <small>CODE EDITOR / SAVE ENABLED</small>
+
           <h2>{file || "SELECT A FILE"}</h2>
 
           {!file && (
@@ -875,7 +1103,9 @@ export default function Dashboard({ maintenance }: DashboardProps) {
               {busy ? "SAVING..." : "SAVE FILE"}
             </button>
 
-            <button onClick={() => setTab("files")}>
+            <button
+              onClick={() => setTab("files")}
+            >
               BACK TO FILES
             </button>
           </div>
